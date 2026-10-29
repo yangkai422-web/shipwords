@@ -609,7 +609,7 @@ button:disabled {
   gap: 0.6rem;
 }
 .plan-includes li::before {
-  content: "âœ?;
+  content: "âœ“";
   flex: none;
   display: grid;
   place-items: center;
@@ -686,7 +686,7 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
-  /* Mobile: title â†?viral sample â†?generator, so visitors from TikTok see something familiar first */
+  /* Mobile: title â†’ viral sample â†’ generator, so visitors from TikTok see something familiar first */
   .hero {
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -817,7 +817,7 @@ button:disabled {
   font-size: 0.9rem;
 }
 .plan-trust span::before {
-  content: "âœ?";
+  content: "âœ“ ";
   color: var(--color-amber);
 }
 .plan-fine {
@@ -1805,7 +1805,7 @@ h2 { font-weight: 800; letter-spacing: -0.015em; }
   box-shadow: 3px 3px 0 rgb(0 0 0 / 0.35);
 }
 .kicker { background: var(--color-amber); color: var(--color-ink); font-size: 0.85rem; }
-.kicker::before { content: "âœ?"; }
+.kicker::before { content: "âœ¦ "; }
 .rec { background: rgb(198 244 50 / 0.12); border: 1px solid rgb(198 244 50 / 0.5); box-shadow: none; transform: none; }
 .sheet .kicker { background: var(--color-ink); color: var(--color-rec); }
 .plan-badge { background: var(--color-rec); color: var(--color-ink); transform: rotate(3deg); }
@@ -1904,7 +1904,7 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
 .ticker b {
   font-family: var(--font-chunk); font-weight: 400; font-size: 1.05rem; text-transform: uppercase; white-space: nowrap; padding: 0 1.25rem;
 }
-.ticker b::after { content: "â˜?; margin-left: 2.5rem; color: var(--color-amber); }
+.ticker b::after { content: "â˜…"; margin-left: 2.5rem; color: var(--color-amber); }
 
 /* Scroll entrance (CSS scroll-driven; content always visible where unsupported) */
 @supports (animation-timeline: view()) {
