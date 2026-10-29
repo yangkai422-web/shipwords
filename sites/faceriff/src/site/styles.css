@@ -2008,3 +2008,16 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
     transition: none;
   }
 }
+
+/* Results panel: one full-width row per video; failed jobs are a compact notice */
+.tool .results { grid-template-columns: 1fr; gap: 0.75rem; }
+.tool .job-done { display: grid; grid-template-columns: minmax(8.5rem, 11rem) 1fr; gap: 1rem; align-items: start; padding: 0.9rem; border-radius: 1.1rem; }
+.tool .job-done video { margin: 0; aspect-ratio: 9 / 16; object-fit: cover; }
+.tool .job-body { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.tool .job-downloads { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.tool .job-downloads .button { flex: 1 1 10rem; justify-content: center; text-align: center; }
+.tool .job-tip { margin: 0; line-height: 1.45; }
+.tool .job-failed { padding: 0.7rem 1rem; border-color: rgb(255 120 120 / 0.35); background: rgb(255 90 90 / 0.08); border-radius: 0.9rem; }
+.tool .job-failed .job-failed-text { margin: 0; font-size: 0.9rem; display: flex; gap: 0.5rem; align-items: center; }
+.tool .job-failed .job-failed-text::before { content: "\21BA"; font-weight: 700; }
+@media (max-width: 520px) { .tool .job-done { grid-template-columns: 1fr; } }

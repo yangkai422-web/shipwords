@@ -127,7 +127,7 @@
   "common_job_overtime": "Still rendering. If it fails, your credits come back automatically.",
   "common_job_email": "We'll email the video to {email} when it's ready, or come back to this page anytime to watch it.",
   "common_job_email_generic": "We'll email you the video when it's ready, or come back to this page anytime to watch it.",
-  "common_job_silent_tip": "Audio muted on TikTok? Upload the muted copy and add \"Outstanding\" from the app's sound library.",
+  "common_job_silent_tip": "Audio muted on TikTok? Upload the muted copy and add “Outstanding” from the app's sound library.",
   "common_job_failed": "This one failed. Your credits went back to your account.",
   "common_job_canceled": "Canceled.",
   "common_started_title": "Your video is rendering",

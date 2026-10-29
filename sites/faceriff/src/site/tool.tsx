@@ -726,7 +726,7 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
   const overtime = elapsed >= OVERTIME_AFTER;
 
   return (
-    <article className="job">
+    <article className={`job${job.outputs[0] ? ' job-done' : ''}${job.status === 'failed' && !job.outputs[0] ? ' job-failed' : ''}`}>
       {active && (
         <div className="job-pending">
           <p>
@@ -745,6 +745,7 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
         <>
           {/* biome-ignore lint/a11y/useMediaCaption: generated videos have no caption track. */}
           <video src={job.outputs[0].url} controls playsInline />
+          <div className="job-body">
           <div className="job-downloads">
             {job.outputs.map((output, i) => (
               <a
@@ -760,9 +761,10 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
             ))}
           </div>
           {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
+          </div>
         </>
       )}
-      {job.status === 'failed' && <p className="error">{m.common_job_failed()}</p>}
+      {job.status === 'failed' && <p className="error job-failed-text">{m.common_job_failed()}</p>}
       {job.status === 'canceled' && <p className="muted">{m.common_job_canceled()}</p>}
     </article>
   );
