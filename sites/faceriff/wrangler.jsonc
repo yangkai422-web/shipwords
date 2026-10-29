@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Example config: resource names, domain and IDs are placeholders. Create your own resources and fill them in before deploying.
+  "name": "faceriff",
+  "routes": [{ "pattern": "faceriff.com", "custom_domain": true }],
+  "main": "src/server.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  // Add your domain before deploying: "routes": [{ "pattern": "your-domain.com", "custom_domain": true }],
+  "vars": {
+    "EMAIL_FROM": "noreply@faceriff.com",
+    // Rybbit collector URL, used only inside the Worker (/stats/* proxy); leave empty to disable.
+    "RYBBIT_UPSTREAM": ""
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "faceriff",
+      "database_id": "6b8d1247-574b-4f34-99ba-33cb9227d438",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "OUTPUTS", "bucket_name": "faceriff-outputs" }],
+  "send_email": [{ "name": "EMAIL" }],
+  "workflows": [
+    {
+      "name": "faceriff-generation",
+      "binding": "GENERATION_WORKFLOW",
+      "class_name": "GenerationWorkflow"
+    }
+  ],
+  // Effect compose container: ffmpeg image in packages/jobs/compose. Uses durable_object scheduling; the instance type
+  // (standard-3: 2 vCPU, 8 GiB; on standard-1's 1/2 vCPU the face check took 25â€?0 s and compose 60 s) is set in start() in server.ts.
+  "containers": [
+    {
+      "class_name": "ComposeContainer",
+      "scheduling_policy": "durable_object",
+      "images": { "compose": { "dockerfile": "../../packages/jobs/compose/Dockerfile" } }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "COMPOSE", "class_name": "ComposeContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ComposeContainer"] }],
+  // Local dev neither builds nor runs the container (no Docker needed); with UPSTREAM_MOCK=1 the mock composer is used instead.
+  "dev": { "enable_containers": false }
+}

@@ -31,3 +31,5 @@ playwright-report/
 
 # Example media (clips and stills cut from third-party footage) stays out of the repo; see sites/tinydeskai-example/README.md
 sites/tinydeskai-example/public/media/
+
+sites/faceriff/public/media/
