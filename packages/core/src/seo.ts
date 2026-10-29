@@ -8,6 +8,9 @@ export interface PageMeta {
   /** Site-relative path starting with /. */
   path: string;
   image?: string;
+  /** Pixel size of image; pair with image for og:image:width/height. */
+  imageWidth?: number;
+  imageHeight?: number;
   noindex?: boolean;
   /** The page's JSON-LD object, e.g. WebApplication or FAQPage. */
   jsonLd?: Record<string, unknown>[];
@@ -32,6 +35,8 @@ export function pageHead(site: SiteConfig, page: PageMeta) {
   ];
   if (page.image) {
     meta.push({ property: 'og:image', content: page.image }, { name: 'twitter:image', content: page.image });
+    if (page.imageWidth) meta.push({ property: 'og:image:width', content: String(page.imageWidth) });
+    if (page.imageHeight) meta.push({ property: 'og:image:height', content: String(page.imageHeight) });
   }
   if (page.noindex) meta.push({ name: 'robots', content: 'noindex, nofollow' });
   return {

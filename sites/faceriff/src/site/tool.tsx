@@ -65,11 +65,37 @@ const PRESETS = [
 // the browser uploads the slots that are still dogs at order time.
 // First version: no default dogs (the dog photos only exist after a real dog generation), so the stage starts with the original performers.
 // To restore: put lead/sax/keys/back-left/back-right-face.jpg (+ half-body .jpg) in public/media/dogs/ and refill this map.
-const DOGS: Record<string, string> = {};
+// Default cast for the Cats hero tab (public/media/cats/). Stage shows 192px face crops (*-face.jpg);
+// at order time the browser uploads the matching half-body photo (same name without -face) so the model gets clothes.
+// Knicks faces (public/media/knicks/) are display-only examples for the Knicks tab — treated as open presets, not uploaded.
+const CATS: Record<string, string> = {
+  lead: '/media/cats/lead-face.jpg',
+  sax: '/media/cats/sax-face.jpg',
+  keys: '/media/cats/keys-face.jpg',
+  backLeft: '/media/cats/back-left-face.jpg',
+  backRight: '/media/cats/back-right-face.jpg',
+};
+const KNICKS: Record<string, string> = {
+  lead: '/media/knicks/lead-face.jpg',
+  sax: '/media/knicks/sax-face.jpg',
+  keys: '/media/knicks/keys-face.jpg',
+  backLeft: '/media/knicks/back-left-face.jpg',
+  backRight: '/media/knicks/back-right-face.jpg',
+};
+const CAST: Record<'viral' | 'ours' | 'dogs', Record<string, string>> = {
+  viral: {},
+  ours: KNICKS,
+  dogs: CATS,
+};
+const isCat = (photo: string | undefined) => Boolean(photo?.startsWith('/media/cats/'));
+const isKnicks = (photo: string | undefined) => Boolean(photo?.startsWith('/media/knicks/'));
+/** Dog-era path kept for any leftover /media/dogs/ assets. */
 const isDog = (photo: string | undefined) => Boolean(photo?.startsWith('/media/dogs/'));
-/** A slot without your own photo yet: empty or still a dog. */
-const isOpen = (photo: string | undefined) => !photo || isDog(photo);
-const dogPhoto = (face: string) => face.replace(/-face\.jpg$/, '.jpg');
+const isPreset = (photo: string | undefined) => isCat(photo) || isKnicks(photo) || isDog(photo);
+/** A slot without your own photo yet: empty or still a preset face. */
+const isOpen = (photo: string | undefined) => !photo || isPreset(photo);
+/** Half-body path for a cat face crop (order upload). */
+const catPhoto = (face: string) => face.replace(/-face\.jpg$/, '.jpg');
 
 // Photos from the phone fill open slots in this order (highlighted preset slots first); slots that are still dogs count as open.
 const FILL_ORDER = ['lead', 'sax', 'keys', 'backLeft', 'backRight'];
@@ -78,6 +104,16 @@ const FILL_ORDER = ['lead', 'sax', 'keys', 'backLeft', 'backRight'];
 const DRAG_START = 6;
 const DROP_REACH = 1.6;
 const ACCEPT = ['image/png', 'image/jpeg', 'image/webp'];
+const ACCEPT_ATTR = 'image/png,image/jpeg,image/jpg,image/webp,.png,.jpg,.jpeg,.webp';
+const HEIC_RE = /\.heic$|\.heif$/i;
+
+function isAcceptedImage(file: File) {
+  if (ACCEPT.includes(file.type)) return true;
+  // Some browsers (esp. iOS) leave type empty; allow by extension only for PNG/JPG/WebP.
+  const name = file.name || '';
+  if (HEIC_RE.test(name) || /image\/hei[cf]/i.test(file.type)) return false;
+  return /\.(png|jpe?g|webp)$/i.test(name) && (!file.type || file.type === 'application/octet-stream');
+}
 
 const root = getRouteApi('__root__');
 
@@ -112,7 +148,7 @@ export function TinyDeskTool({
   const auth = authClient(config.googleClientId);
   const session = auth.useSession();
   const { jobs, generate, submitting, error } = generation;
-  const [photos, setPhotos] = useState<Record<string, string>>(DOGS);
+  const [photos, setPhotos] = useState<Record<string, string>>(CATS);
   const [uploading, setUploading] = useState<string | null>(null);
   // While the dog photos upload before ordering, the button shows "Starting…" so it is not clicked twice.
   const [preparing, setPreparing] = useState(false);
@@ -189,6 +225,23 @@ export function TinyDeskTool({
     });
   }
 
+  // When the hero tab changes, swap preset faces to that cast (cats / knicks / empty for original).
+  // Keep any slot that already holds a user upload (/files/uploads/ or other non-preset path).
+  useEffect(() => {
+    const cast = CAST[stage];
+    changePhotos((current) => {
+      const next: Record<string, string> = { ...current };
+      for (const slot of SLOTS) {
+        const cur = current[slot.id];
+        if (cur && !isPreset(cur)) continue; // user upload - keep
+        if (cast[slot.id]) next[slot.id] = cast[slot.id]!;
+        else delete next[slot.id];
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when the hero stage tab changes
+  }, [stage]);
+
   useEffect(() => {
     if (!rendering) setConfirmAnother(false);
   }, [rendering]);
@@ -198,6 +251,10 @@ export function TinyDeskTool({
 
   async function onPick(slotId: string, file: File | undefined, via: 'picker' | 'drop') {
     if (!file) return;
+    if (!isAcceptedImage(file)) {
+      setUploadError(m.common_tool_file_type());
+      return;
+    }
     setUploadError(null);
     setUploading(slotId);
     try {
@@ -313,7 +370,7 @@ export function TinyDeskTool({
     setFileTarget(null);
     const target = fileSeat(event);
     if (!target || uploading) return;
-    const file = [...event.dataTransfer.files].find((f) => ACCEPT.includes(f.type));
+    const file = [...event.dataTransfer.files].find((f) => isAcceptedImage(f));
     if (file) void onPick(target, file, 'drop');
     else setUploadError(m.common_tool_file_type());
   }
@@ -325,15 +382,15 @@ export function TinyDeskTool({
     if (empty[0]) inputs.current.get(empty[0])?.click();
   }
 
-  /** Replaces slots that are still dogs with upload paths; returns null on upload failure, after showing the error, so no order is placed. */
+  /** Replaces slots that are still cat presets with upload paths (half-body); knicks/empty presets stay out of the order. Returns null on upload failure. */
   async function uploadDogs(current: Record<string, string>): Promise<Record<string, string> | null> {
     const slots = { ...current };
     for (const [slotId, photo] of Object.entries(current)) {
-      if (!isDog(photo)) continue;
+      if (!isCat(photo) && !isDog(photo)) continue;
       let path = dogUploads.current.get(photo);
       if (!path) {
         try {
-          const blob = await (await fetch(dogPhoto(photo))).blob();
+          const blob = await (await fetch(catPhoto(photo))).blob();
           path = await uploadReference(new File([blob], `${slotId}.jpg`, { type: 'image/jpeg' }));
         } catch (e) {
           setUploadError(e instanceof Error ? e.message : m.common_tool_upload_failed());
@@ -426,8 +483,8 @@ export function TinyDeskTool({
           const seat = SEATS[slot.id]!;
           const photo = photos[slot.id];
           const member = seat.label();
-          // × on your own photo puts this slot's dog back; × on a dog clears it and keeps the original coach.
-          const dogBack = isDog(photo) ? undefined : DOGS[slot.id];
+          // × on your own photo puts this stage's preset face back; × on a preset clears it (stage background shows through).
+          const dogBack = isPreset(photo) ? undefined : CAST[stage][slot.id];
           return (
             <div
               key={slot.id}
@@ -466,7 +523,7 @@ export function TinyDeskTool({
                     else inputs.current.delete(slot.id);
                   }}
                   type="file"
-                  accept={ACCEPT.join(',')}
+                  accept={ACCEPT_ATTR}
                   className="sr-only"
                   disabled={uploading !== null}
                   onChange={(e) => void onPick(slot.id, e.target.files?.[0], 'picker')}

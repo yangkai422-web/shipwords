@@ -178,6 +178,8 @@ const MAX_SIDE = 2048;
  * Formats the browser cannot decode upload as is and the server reports the error.
  */
 async function shrink(file: File): Promise<Blob> {
+  const isHeic =
+    /image\/hei[cf]/i.test(file.type) || /\.(heic|heif)$/i.test(file.name || '');
   try {
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
@@ -187,10 +189,18 @@ async function shrink(file: File): Promise<Blob> {
     canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
-    return blob ?? file;
+    if (blob) return blob;
   } catch {
-    return file;
+    // fall through
   }
+  if (isHeic) {
+    throw new Error(m.common_tool_file_type());
+  }
+  // Non-HEIC fallback: upload original if the browser already gave PNG/JPEG/WebP.
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    throw new Error(m.common_tool_file_type());
+  }
+  return file;
 }
 
 /** Phone upload page (/phone/<code>): pick a few photos, upload each and register it under the pairing code. */
@@ -224,7 +234,10 @@ export function PhoneUploadPage({ token }: { token: string }) {
     for (const { file, id } of batch) {
       try {
         const blob = await shrink(file);
-        const path = await uploadReference(new File([blob], file.name, { type: blob.type || file.type }));
+        // Always POST as JPEG — server only accepts png/jpeg/webp (HEIC rejected).
+        const path = await uploadReference(
+          new File([blob], `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' }),
+        );
         const response = await fetch(`/api/handoff/${token}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -257,7 +270,7 @@ export function PhoneUploadPage({ token }: { token: string }) {
             {sending ? m.common_phone_sending() : done ? m.common_phone_more() : m.common_phone_pick()}
             <input
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/jpg,image/webp,.png,.jpg,.jpeg,.webp"
               multiple
               className="sr-only"
               disabled={sending}

@@ -48,6 +48,7 @@ export function Faq({ title, items }: { title: string; items: FaqItem[] }) {
   return (
     <div className="faq">
       <h2>{title}</h2>
+      {/* Answers stay in the SSR HTML (not client-only). details/summary is progressive enhancement. */}
       {items.map((item) => (
         <details key={item.q}>
           <summary>{item.q}</summary>

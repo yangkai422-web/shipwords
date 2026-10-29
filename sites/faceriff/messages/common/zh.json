@@ -96,7 +96,7 @@
   "common_preset_band": "整支乐队",
   "common_preset_back": "只换后排",
   "common_tool_upload_failed": "上传失败",
-  "common_tool_file_type": "请用 PNG、JPG 或 WebP 格式的照片",
+  "common_tool_file_type": "请用 PNG、JPG 或 WebP 格式的照片（iPhone 的 HEIC 不支持，请先导出为 JPG）",
   "common_tool_legend": "点一位乐队成员，换上照片",
   "common_tool_swap": "替换{member}",
   "common_tool_new": "新{member}",

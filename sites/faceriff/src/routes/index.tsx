@@ -105,6 +105,9 @@ export const Route = createFileRoute('/')({
       title: m.home_title(),
       description: m.home_description({ price: BAND_PRICE }),
       path: '/',
+      image: `${site.url}/og.jpg`,
+      imageWidth: 1200,
+      imageHeight: 630,
       jsonLd: [
         {
           '@type': 'WebApplication',
@@ -198,40 +201,56 @@ function SoundClip({ clip, tag, label }: { clip: string; tag: string; label: str
   );
 }
 
-// Hero compare: original viral coaches clip (before) next to the Knicks Tiny Desk cut (after),
-// same idea as tinydeskai.io's sample area but always shown side by side. Dog / ours tabs stay hidden.
-const COMPARE = {
-  before: {
-    clip: 'viral-coaches',
-    tag: m.home_viral_coaches_tag,
-    label: m.home_viral_coaches_label,
-    chip: m.home_compare_before,
+// Hero sample: single video window with three tabs (Cats / Knicks / Original), matching tinydeskai.io.
+// Cats is the FaceRiff-generated pet cut with audio; Knicks and Original keep the existing viral assets.
+const HERO_CLIPS = {
+  cats: {
+    clip: 'sample-cats',
+    tab: m.home_hero_tab_cats,
+    tag: m.home_cats_band_tag,
+    label: m.home_cats_band_label,
+    hook: m.home_cats_band_hook,
+    note: m.home_cats_band_note,
   },
-  after: {
+  knicks: {
     clip: 'viral-knicks',
+    tab: m.home_hero_tab_knicks,
     tag: m.home_viral_knicks_tag,
     label: m.home_viral_knicks_label,
-    chip: m.home_compare_after,
+    hook: m.home_viral_knicks_hook,
+    note: m.home_viral_knicks_note,
+  },
+  original: {
+    clip: 'viral-coaches',
+    tab: m.home_hero_tab_viral,
+    tag: m.home_viral_coaches_tag,
+    label: m.home_viral_coaches_label,
+    hook: m.home_viral_coaches_hook,
+    note: m.home_viral_coaches_note,
   },
 } as const;
 
-function HeroCompare() {
+type HeroView = keyof typeof HERO_CLIPS;
+
+function HeroClip({ view, onPick }: { view: HeroView; onPick: (view: HeroView) => void }) {
+  const shown = HERO_CLIPS[view];
+  // Prefetch posters so a tab switch does not flash black before the first frame.
+  useEffect(() => {
+    for (const { clip } of Object.values(HERO_CLIPS)) new Image().src = `/media/${clip}.jpg`;
+  }, []);
   return (
-    <figure className="sample-card sample-compare">
-      <div className="compare-pair">
-        {(Object.keys(COMPARE) as (keyof typeof COMPARE)[]).map((side) => {
-          const item = COMPARE[side];
-          return (
-            <div key={side} className={`compare-col compare-${side}`}>
-              <span className="compare-chip">{item.chip()}</span>
-              <SoundClip clip={item.clip} tag={item.tag()} label={item.label()} />
-            </div>
-          );
-        })}
-      </div>
+    <figure className="sample-card">
+      <fieldset className="clip-switch" aria-label={m.home_hero_tab_label()}>
+        {(Object.keys(HERO_CLIPS) as HeroView[]).map((key) => (
+          <button key={key} type="button" aria-pressed={view === key} onClick={() => onPick(key)}>
+            {HERO_CLIPS[key].tab()}
+          </button>
+        ))}
+      </fieldset>
+      <SoundClip clip={shown.clip} tag={shown.tag()} label={shown.label()} />
       <figcaption>
-        <strong>{m.home_compare_caption()}</strong>
-        <span className="mono">{m.home_compare_note()}</span>
+        <strong>{shown.hook()}</strong>
+        <span className="mono">{shown.note()}</span>
       </figcaption>
     </figure>
   );
@@ -241,6 +260,7 @@ const root = getRouteApi('__root__');
 function HomePage() {
   const config = root.useLoaderData();
   const generation = useGeneration({ recaptchaSiteKey: config.recaptchaSiteKey });
+  const [heroView, setHeroView] = useState<HeroView>('cats');
   return (
     <>
       <section className="hero" id="make">
@@ -249,10 +269,14 @@ function HomePage() {
           <p className="rec mono">{m.home_hero_rec()}</p>
           <h1>{m.home_hero_title()}</h1>
           <p className="lead">{m.home_hero_lead()}</p>
+          <p className="muted mono">{m.common_guide_updated({ date: m.home_updated_date() })}</p>
         </div>
-        <HeroCompare />
+        <HeroClip view={heroView} onPick={setHeroView} />
         <div className="hero-tool">
-          <TinyDeskTool generation={generation} stage="viral" />
+          <TinyDeskTool
+            generation={generation}
+            stage={({ cats: 'dogs', knicks: 'ours', original: 'viral' } as const)[heroView]}
+          />
         </div>
       </section>
 
@@ -276,7 +300,7 @@ function HomePage() {
         <div className="ticker-track">
           {[0, 1].map((k) => (
             <span key={k}>
-              {['Tiny Desk AI 🎤', 'Rumpelstiltskin ✨', 'Burning Bridges 🔥', 'Gas station dance 🕺', 'Zombie AI 🧟', 'AI hamster dance 🐹', 'AI dog meme 🐶'].map((t) => (
+              {['Tiny Desk AI 🎤', 'Outstanding encore 🎷', 'Tiny Desk meme ✨', 'AI face swap 🎭', 'Your cast on desk 🪑'].map((t) => (
                 <b key={t}>{t}</b>
               ))}
             </span>

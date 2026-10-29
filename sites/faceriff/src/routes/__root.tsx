@@ -92,7 +92,7 @@ function NotFound() {
 
 function Document({ children }: { children: ReactNode }) {
   return (
-    <html lang={getLocale()} translate="no" className="notranslate">
+    <html lang={getLocale()}>
       <head>
         <HeadContent />
       </head>
