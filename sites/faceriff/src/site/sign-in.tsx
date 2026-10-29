@@ -109,7 +109,7 @@ export function SignInDialog() {
     // biome-ignore lint/a11y/useKeyWithClickEvents: clicking the backdrop is a mouse shortcut; keyboard users close with native Esc.
     <dialog
       ref={dialog}
-      className="sign-in-dialog"
+      className="sign-in-dialog notranslate" translate="no"
       aria-labelledby="sign-in-title"
       onClose={() => setOpen(false)}
       onClick={(e) => {
@@ -166,6 +166,9 @@ export function SignInPanel({ onDone }: { onDone: () => void }) {
     return () => {
       cancelled = true;
       afterGoogle = () => undefined;
+      // GSI injects nodes outside React; clear them so unmount/reconcile
+      // does not fight third-party (or browser-translate) DOM mutations.
+      container.replaceChildren();
     };
   }, [config.googleClientId]);
 
@@ -194,10 +197,10 @@ export function SignInPanel({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="sign-in">
+    <div className="sign-in notranslate" translate="no">
       {config.googleClientId && (
         <>
-          <div ref={google} className="google-button" />
+          <div ref={google} className="google-button notranslate" translate="no" />
           <p className="or mono">{m.common_sign_in_or_email()}</p>
         </>
       )}

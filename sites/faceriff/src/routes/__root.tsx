@@ -37,7 +37,33 @@ export const Route = createRootRoute({
   shellComponent: Document,
   component: Layout,
   notFoundComponent: NotFound,
+  // Browser translate / extensions often mutate the DOM and trigger React
+  // removeChild errors during login (Google button). Soft boundary so users
+  // can dismiss and retry without a red panic overlay.
+  errorComponent: RouteError,
 });
+
+
+function RouteError({ error }: { error: unknown }) {
+  const message = error instanceof Error ? error.message : String(error);
+  const translateConflict =
+    /removeChild|not a child of this node|insertBefore/i.test(message);
+  return (
+    <section className="sheet legal" translate="no">
+      <h1>{translateConflict ? "Page refresh needed" : "Something went wrong"}</h1>
+      <p className="legal-intro">
+        {translateConflict
+          ? "A browser translation tool or extension changed this page while it was updating (common on the sign-in screen). Turn off page translate for faceriff.com, click Hide if you still see an old error, then try signing in again."
+          : message}
+      </p>
+      <p>
+        <a href="/login">Back to sign in</a>
+        {" · "}
+        <a href="/">Home</a>
+      </p>
+    </section>
+  );
+}
 
 // 404: React 19 hoists title and meta into head.
 function NotFound() {
@@ -66,7 +92,7 @@ function NotFound() {
 
 function Document({ children }: { children: ReactNode }) {
   return (
-    <html lang={getLocale()}>
+    <html lang={getLocale()} translate="no" className="notranslate">
       <head>
         <HeadContent />
       </head>
