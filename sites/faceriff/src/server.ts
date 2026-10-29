@@ -31,6 +31,12 @@ export class ComposeContainer extends Container {
 
 export default {
   async fetch(request, env) {
+    // www.faceriff.com -> apex (301, path and query kept).
+    const url = new URL(request.url);
+    if (url.hostname === 'www.faceriff.com') {
+      url.hostname = 'faceriff.com';
+      return Response.redirect(url.toString(), 301);
+    }
     // Rybbit stats go through /stats/ on this site and are forwarded to the collector here.
     const stats = await proxyRybbit(request, env.RYBBIT_UPSTREAM);
     if (stats) return stats;

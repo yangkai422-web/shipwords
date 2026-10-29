@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   // Example config: resource names, domain and IDs are placeholders. Create your own resources and fill them in before deploying.
   "name": "faceriff",
-  "routes": [{ "pattern": "faceriff.com", "custom_domain": true }],
+  "routes": [{ "pattern": "faceriff.com", "custom_domain": true }, { "pattern": "www.faceriff.com", "custom_domain": true }],
   "main": "src/server.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
