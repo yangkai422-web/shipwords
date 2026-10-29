@@ -198,7 +198,7 @@ function SoundClip({ clip, tag, label }: { clip: string; tag: string; label: str
   );
 }
 
-// Hero compare: original viral coaches clip (before) next to the cat Tiny Desk cut (after),
+// Hero compare: original viral coaches clip (before) next to the Knicks Tiny Desk cut (after),
 // same idea as tinydeskai.io's sample area but always shown side by side. Dog / ours tabs stay hidden.
 const COMPARE = {
   before: {
@@ -208,9 +208,9 @@ const COMPARE = {
     chip: m.home_compare_before,
   },
   after: {
-    clip: 'viral-cat',
-    tag: m.home_viral_cat_tag,
-    label: m.home_viral_cat_label,
+    clip: 'viral-knicks',
+    tag: m.home_viral_knicks_tag,
+    label: m.home_viral_knicks_label,
     chip: m.home_compare_after,
   },
 } as const;
