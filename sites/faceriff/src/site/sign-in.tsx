@@ -109,7 +109,7 @@ export function SignInDialog() {
     // biome-ignore lint/a11y/useKeyWithClickEvents: clicking the backdrop is a mouse shortcut; keyboard users close with native Esc.
     <dialog
       ref={dialog}
-      className="sign-in-dialog notranslate" translate="no"
+      className="sign-in-dialog"
       aria-labelledby="sign-in-title"
       onClose={() => setOpen(false)}
       onClick={(e) => {
@@ -197,10 +197,10 @@ export function SignInPanel({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="sign-in notranslate" translate="no">
+    <div className="sign-in">
       {config.googleClientId && (
         <>
-          <div ref={google} className="google-button notranslate" translate="no" />
+          <div ref={google} className="google-button" />
           <p className="or mono">{m.common_sign_in_or_email()}</p>
         </>
       )}

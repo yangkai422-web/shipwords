@@ -49,7 +49,7 @@ function RouteError({ error }: { error: unknown }) {
   const translateConflict =
     /removeChild|not a child of this node|insertBefore/i.test(message);
   return (
-    <section className="sheet legal" translate="no">
+    <section className="sheet legal">
       <h1>{translateConflict ? "Page refresh needed" : "Something went wrong"}</h1>
       <p className="legal-intro">
         {translateConflict
