@@ -1,4 +1,4 @@
-﻿# FaceRiff design direction
+# FaceRiff design direction
 
 FaceRiff is a meme video generator: each meme is a fixed template where visitors drop in faces. Meme #1 is the Tiny Desk "Outstanding" AI meme; more memes get their own pages later.
 
@@ -14,7 +14,7 @@ FaceRiff is a meme video generator: each meme is a fixed template where visitors
 
 ## Components
 
-- **Seat-picker stage**: three-frame collage (`public/media/stage*.jpg`) with dashed coral ring slots per performer (coordinates in `SEATS` in `tool.tsx`); live mono status line `swapped 2/5 · $9.98`; presets above, consent box and price below.
+- **Seat-picker stage**: three-frame collage (`public/media/stage*.jpg`) with dashed coral ring slots per performer (coordinates in `SEATS` in `tool.tsx`); live mono status line `swapped 2/5 · $9.88`; presets above, consent box and price below.
 - **Shot strip**: four small vertical clips with timestamp, shot name and seat.
 - **Generating / result**: three plain status steps with a time estimate (no fake percentages); two downloads (with song, muted).
 - **Pricing**: three cards, featured one outlined in coral with an Archivo Black tag.
