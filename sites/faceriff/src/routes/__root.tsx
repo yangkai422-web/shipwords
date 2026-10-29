@@ -23,7 +23,7 @@ export const Route = createRootRoute({
       { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' },
       {
         rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Space+Grotesk:wght@400;600&family=Space+Mono:wght@400;700&display=swap',
+        href: 'https://fonts.googleapis.com/css2?family=Archivo+Black&family=Dela+Gothic+One&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Space+Grotesk:wght@400;600&family=Space+Mono:wght@400;700&display=swap',
       },
       { rel: 'stylesheet', href: appCss },
       // Link previews and many crawlers ignore SVG, so the ICO goes first as a fallback.

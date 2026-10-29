@@ -280,6 +280,17 @@ function HomePage() {
       </section>
       )}
 
+      <div className="ticker" aria-hidden="true">
+        <div className="ticker-track">
+          {[0, 1].map((k) => (
+            <span key={k}>
+              {['Tiny Desk AI 🎤', 'Rumpelstiltskin ✨', 'Burning Bridges 🔥', 'Gas station dance 🕺', 'Zombie AI 🧟', 'AI hamster dance 🐹', 'AI dog meme 🐶'].map((t) => (
+                <b key={t}>{t}</b>
+              ))}
+            </span>
+          ))}
+        </div>
+      </div>
       <section className="band" id="whats-in">
         <p className="kicker">{m.home_cut_kicker()}</p>
         <h2>{m.home_cut_title()}</h2>
