@@ -198,57 +198,49 @@ function SoundClip({ clip, tag, label }: { clip: string; tag: string; label: str
   );
 }
 
-// Hero sample: defaults to the dog version (every competitor's sample is people, so pets set us apart): Kling 4.0 edit mode swaps
-// all 5 for AI-generated dogs in one run (a few human fingers still show at the keyboard's lower edge), re-timed per shot to match the original frame by frame.
-// It can switch to the top viral TikTok (College Football Week 8, about 288K likes, starting at the three coaches singing, skipping the opening profile shot),
-// or to a real output with people: all 5 swapped (AI-generated faces), same pipeline, original song mixed back in.
-// First version: only the original viral clip is shown. Add 'ours' / 'dogs' entries back once real outputs exist (the switch appears with 2+ entries).
-const HERO_CLIPS = {
-  viral: {
+// Hero compare: original viral coaches clip (before) next to the cat Tiny Desk cut (after),
+// same idea as tinydeskai.io's sample area but always shown side by side. Dog / ours tabs stay hidden.
+const COMPARE = {
+  before: {
     clip: 'viral-coaches',
-    tab: m.home_hero_tab_viral,
     tag: m.home_viral_coaches_tag,
     label: m.home_viral_coaches_label,
-    hook: m.home_viral_coaches_hook,
-    note: m.home_viral_coaches_note,
+    chip: m.home_compare_before,
+  },
+  after: {
+    clip: 'viral-cat',
+    tag: m.home_viral_cat_tag,
+    label: m.home_viral_cat_label,
+    chip: m.home_compare_after,
   },
 } as const;
 
-type HeroView = keyof typeof HERO_CLIPS;
-
-function HeroClip({ view, onPick }: { view: HeroView; onPick: (view: HeroView) => void }) {
-  const shown = HERO_CLIPS[view];
-  // Prefetch both posters: right after a switch the new clip has no first frame yet, so show its poster instead of a black flash.
-  useEffect(() => {
-    for (const { clip } of Object.values(HERO_CLIPS)) new Image().src = `/media/${clip}.jpg`;
-  }, []);
+function HeroCompare() {
   return (
-    <figure className="sample-card">
-      {Object.keys(HERO_CLIPS).length > 1 && (
-      <fieldset className="clip-switch" aria-label={m.home_hero_tab_label()}>
-        {(Object.keys(HERO_CLIPS) as HeroView[]).map((key) => (
-          <button key={key} type="button" aria-pressed={view === key} onClick={() => onPick(key)}>
-            {HERO_CLIPS[key].tab()}
-          </button>
-        ))}
-      </fieldset>
-      )}
-      <SoundClip clip={shown.clip} tag={shown.tag()} label={shown.label()} />
+    <figure className="sample-card sample-compare">
+      <div className="compare-pair">
+        {(Object.keys(COMPARE) as (keyof typeof COMPARE)[]).map((side) => {
+          const item = COMPARE[side];
+          return (
+            <div key={side} className={`compare-col compare-${side}`}>
+              <span className="compare-chip">{item.chip()}</span>
+              <SoundClip clip={item.clip} tag={item.tag()} label={item.label()} />
+            </div>
+          );
+        })}
+      </div>
       <figcaption>
-        <strong>{shown.hook()}</strong>
-        <span className="mono">{shown.note()}</span>
+        <strong>{m.home_compare_caption()}</strong>
+        <span className="mono">{m.home_compare_note()}</span>
       </figcaption>
     </figure>
   );
 }
-
 const root = getRouteApi('__root__');
 
 function HomePage() {
   const config = root.useLoaderData();
   const generation = useGeneration({ recaptchaSiteKey: config.recaptchaSiteKey });
-  // The hero sample and the stage show the same cast, so it is clear who replaced whom; on load both are dogs, matching the 5 dogs placed on the stage by default.
-  const [heroView, setHeroView] = useState<HeroView>('viral');
   return (
     <>
       <section className="hero" id="make">
@@ -258,9 +250,9 @@ function HomePage() {
           <h1>{m.home_hero_title()}</h1>
           <p className="lead">{m.home_hero_lead()}</p>
         </div>
-        <HeroClip view={heroView} onPick={setHeroView} />
+        <HeroCompare />
         <div className="hero-tool">
-          <TinyDeskTool generation={generation} stage={heroView} />
+          <TinyDeskTool generation={generation} stage="viral" />
         </div>
       </section>
 

@@ -144,7 +144,7 @@ h3 {
 /* Hero */
 .hero {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: 1.05fr 1.15fr;
   grid-template-areas:
     "head clip"
     "tool clip";
@@ -1937,4 +1937,74 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .ticker-track { flex-wrap: wrap; width: auto; }
   .ticker-track > span + span { display: none; }
+}
+
+/* Side-by-side before/after hero compare (coaches vs cats) */
+.sample-compare {
+  max-width: 36rem;
+}
+.compare-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+.compare-col {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.compare-chip {
+  justify-self: start;
+  font-family: var(--font-chunk, var(--font-poster));
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  background: var(--color-cream);
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  box-shadow: 3px 3px 0 rgb(0 0 0 / 0.35);
+  transform: rotate(-2deg);
+}
+.compare-after .compare-chip {
+  background: var(--color-rec);
+  transform: rotate(2deg);
+}
+.sample-compare .clip-frame .poster-tag {
+  font-size: 0.72rem;
+  max-width: calc(100% - 3.6rem);
+}
+.sample-compare video {
+  border-radius: 1.1rem;
+}
+.sample-compare:hover {
+  transform: none; /* dual cards: don't tilt the whole pair */
+}
+.compare-col .clip-frame {
+  transition: transform 0.35s cubic-bezier(.34,1.56,.64,1);
+}
+.compare-col:hover .clip-frame {
+  transform: translateY(-4px) rotate(-1deg);
+}
+.compare-after:hover .clip-frame {
+  transform: translateY(-4px) rotate(1deg);
+}
+@media (max-width: 760px) {
+  .sample-compare {
+    max-width: 20rem;
+    margin-inline: auto;
+  }
+  .compare-pair {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .compare-col:hover .clip-frame {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-col .clip-frame {
+    transition: none;
+  }
 }
