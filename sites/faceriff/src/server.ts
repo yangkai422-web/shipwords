@@ -9,9 +9,10 @@ import models from '../site.models';
 // Worker entry: pages and API go to TanStack Start, plus the Workflow class for generation jobs and the compose container.
 export const GenerationWorkflow = defineGenerationWorkflow(models, site);
 
-/** Effect video compose (ffmpeg), image in packages/jobs/compose; one instance per jobId, sleeps after a few idle minutes. */
+/** Effect video compose (ffmpeg), image in packages/jobs/compose; one instance per jobId. Explicit destroy after each use. */
 export class ComposeContainer extends Container {
   override defaultPort = 8080;
+  /** Backup only: composer calls __destroy after each job; stop() alone left VMs Running for days. */
   override sleepAfter = '5m';
 
   // biome-ignore lint/complexity/noBannedTypes: matches the Container base class constructor signature
@@ -26,6 +27,20 @@ export class ComposeContainer extends Container {
     const start = container.start.bind(container);
     container.start = (options) =>
       start({ ...options, image: container.images?.compose, instance: 'standard-3' } as never);
+  }
+
+  /** Internal release path used by @shipwords/jobs containerComposer (not a public HTTP route). */
+  override async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === '/__destroy') {
+      await this.destroy();
+      return new Response('destroyed');
+    }
+    return super.fetch(request);
+  }
+
+  /** If a caller forgets __destroy, SIGKILL the VM instead of stop()/SIGTERM which did not release billing. */
+  override async onActivityExpired(): Promise<void> {
+    await this.destroy();
   }
 }
 

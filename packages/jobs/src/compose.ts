@@ -52,9 +52,19 @@ async function blobOf(bucket: R2Bucket, key: string): Promise<Blob> {
   return new Blob([await object.arrayBuffer()], { type: 'application/octet-stream' });
 }
 
+/** Force-release the job's container VM; sleepAfter alone has left instances Running for days. */
+async function destroyCompose(stub: DurableObjectStub): Promise<void> {
+  try {
+    await stub.fetch('http://compose/__destroy');
+  } catch {
+    // Best-effort: ComposeContainer.onActivityExpired also destroys.
+  }
+}
+
 /**
- * The site binds the Container class as a Durable Object (e.g. COMPOSE) and picks an instance by jobId:
- * retries of the same job hit the same container instance, so a second request can read the previous result files.
+ * The site binds the Container class as a Durable Object (e.g. COMPOSE) and picks an instance by jobId.
+ * After each compose/faces call the VM is destroyed so idle standard-3 instances cannot keep billing.
+ * Workflow step results are persisted, so a retry restarts a fresh container rather than reading old files.
  */
 export function containerComposer(namespace: DurableObjectNamespace, bucket: R2Bucket): Composer {
   return {
@@ -81,12 +91,16 @@ export function containerComposer(namespace: DurableObjectNamespace, bucket: R2B
       form.set('audio', await blobOf(bucket, input.audio.key), 'audio');
 
       const stub = namespace.get(namespace.idFromName(input.jobId));
-      const composed = await stub.fetch('http://compose/compose', { method: 'POST', body: form });
-      if (!composed.ok) throw new Error(`compose failed: ${composed.status} ${await composed.text()}`);
-      const song = await composed.arrayBuffer();
-      const silent = await stub.fetch(`http://compose/files/${input.jobId}/silent.mp4`);
-      if (!silent.ok) throw new Error(`compose silent copy failed: ${silent.status}`);
-      return { song, silent: await silent.arrayBuffer() };
+      try {
+        const composed = await stub.fetch('http://compose/compose', { method: 'POST', body: form });
+        if (!composed.ok) throw new Error(`compose failed: ${composed.status} ${await composed.text()}`);
+        const song = await composed.arrayBuffer();
+        const silent = await stub.fetch(`http://compose/files/${input.jobId}/silent.mp4`);
+        if (!silent.ok) throw new Error(`compose silent copy failed: ${silent.status}`);
+        return { song, silent: await silent.arrayBuffer() };
+      } finally {
+        await destroyCompose(stub);
+      }
     },
     async faces(input) {
       const form = new FormData();
@@ -95,16 +109,20 @@ export function containerComposer(namespace: DurableObjectNamespace, bucket: R2B
       form.set('video', await blobOf(bucket, input.key), 'video.mp4');
       form.set('original', await blobOf(bucket, input.originalKey), 'original.mp4');
       const stub = namespace.get(namespace.idFromName(input.jobId));
-      const response = await stub.fetch('http://compose/faces', { method: 'POST', body: form });
-      if (!response.ok) throw new Error(`faces failed: ${response.status} ${await response.text()}`);
-      const { similarity } = (await response.json()) as { similarity?: unknown };
-      if (
-        !Array.isArray(similarity) ||
-        similarity.length !== input.points.length ||
-        !similarity.every((value) => typeof value === 'number')
-      )
-        throw new Error('faces returned no scores');
-      return similarity as number[];
+      try {
+        const response = await stub.fetch('http://compose/faces', { method: 'POST', body: form });
+        if (!response.ok) throw new Error(`faces failed: ${response.status} ${await response.text()}`);
+        const { similarity } = (await response.json()) as { similarity?: unknown };
+        if (
+          !Array.isArray(similarity) ||
+          similarity.length !== input.points.length ||
+          !similarity.every((value) => typeof value === 'number')
+        )
+          throw new Error('faces returned no scores');
+        return similarity as number[];
+      } finally {
+        await destroyCompose(stub);
+      }
     },
   };
 }
