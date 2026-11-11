@@ -1,4 +1,5 @@
 import { DAY, shanghaiDay } from './admin-data';
+import { visitorDimensions } from './visitor-dimensions';
 
 export function isVisitorRequest(request: Request, response: Response): boolean {
   const path = new URL(request.url).pathname;
@@ -53,13 +54,26 @@ export async function recordVisitor(
     request.headers.get('cf-connecting-ip') ?? '',
     request.headers.get('user-agent') ?? '',
   );
+  const dimensions = Object.entries(visitorDimensions(request));
+  // D1 batch is a serial, atomic transaction. Increment before inserting the dedup marker:
+  // duplicate/concurrent requests cannot increment a second time, and failures roll back both.
   await db.batch([
     db
       .prepare('INSERT INTO analytics_meta(key,value) VALUES (?,?) ON CONFLICT DO NOTHING')
       .bind('tracking_started_at', now),
     db
+      .prepare('INSERT INTO analytics_meta(key,value) VALUES (?,?) ON CONFLICT DO NOTHING')
+      .bind('dimensions_started_at', now),
+    db
+      .prepare(`INSERT INTO daily_visitor_dimensions(day,dimension,value,count)
+      SELECT ?,json_extract(d.value,'$[0]'),json_extract(d.value,'$[1]'),1 FROM json_each(?) d
+      WHERE NOT EXISTS (SELECT 1 FROM daily_visitors WHERE day=? AND visitor_hash=?)
+      ON CONFLICT(day,dimension,value) DO UPDATE SET count=daily_visitor_dimensions.count+1`)
+      .bind(day, JSON.stringify(dimensions), day, hash),
+    db
       .prepare('INSERT INTO daily_visitors(day,visitor_hash) VALUES (?,?) ON CONFLICT DO NOTHING')
       .bind(day, hash),
     db.prepare('DELETE FROM daily_visitors WHERE day<?').bind(shanghaiDay(now - 90 * DAY)),
+    db.prepare('DELETE FROM daily_visitor_dimensions WHERE day<?').bind(shanghaiDay(now - 90 * DAY)),
   ]);
 }

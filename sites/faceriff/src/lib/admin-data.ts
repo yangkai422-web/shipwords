@@ -1,3 +1,5 @@
+import { loadDimensions, type TrafficDimensions } from './admin-dimensions';
+
 export const DAY = 86_400_000;
 export const YIR_ESTIMATE_USD = 2.7378;
 export const shanghaiDay = (now: number) => new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
@@ -104,6 +106,7 @@ export interface Dashboard {
   range: DateRange;
   trackingStartedAt: number | null;
   cfHistory: CloudflareHistory | null;
+  dimensions: TrafficDimensions;
   daily: DailyRow[];
   totals: Omit<DailyRow, 'day'>;
   orders: RecentOrder[];
@@ -282,6 +285,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
     range,
     trackingStartedAt,
     cfHistory,
+    dimensions: await loadDimensions(db, range),
     daily: daily.reverse(),
     totals,
     orders: (rows(6) as unknown as RecentOrder[]).map((o) => ({ ...o, email: maskEmail(o.email) })),

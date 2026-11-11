@@ -24,3 +24,28 @@ export const cloudflareDailyTraffic = sqliteTable('cf_daily_traffic', {
   fetchedAt: integer('fetched_at').notNull(),
   isPartial: integer('is_partial', { mode: 'boolean' }).notNull().default(false),
 });
+
+// Marginal counts only: no dimension is attached to an individual daily pseudonym.
+export const dailyVisitorDimensions = sqliteTable(
+  'daily_visitor_dimensions',
+  {
+    day: text('day').notNull(),
+    dimension: text('dimension').notNull(),
+    value: text('value').notNull(),
+    count: integer('count').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.day, table.dimension, table.value] })],
+);
+export const cloudflareDailyDimensions = sqliteTable(
+  'cf_daily_dimensions',
+  {
+    dayUtc: text('day_utc').notNull(),
+    dataset: text('dataset').notNull(),
+    dimension: text('dimension').notNull(),
+    value: text('value').notNull(),
+    count: integer('count').notNull(),
+    fetchedAt: integer('fetched_at').notNull(),
+    isPartial: integer('is_partial', { mode: 'boolean' }).notNull().default(false),
+  },
+  (table) => [primaryKey({ columns: [table.dayUtc, table.dataset, table.dimension, table.value] })],
+);

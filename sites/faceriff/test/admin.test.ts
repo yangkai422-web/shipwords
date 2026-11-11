@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleAdminRequest, isAdmin, renderDashboard } from '../src/lib/admin.server';
 import { dateRange, loadDashboard, maskEmail, shanghaiDay, visitorReference } from '../src/lib/admin-data';
+import { referrerPlatform, visitorDimensions } from '../src/lib/visitor-dimensions';
 import { isVisitorRequest, recordVisitor, visitorHash } from '../src/lib/visitors';
 
 const secret = 'test-only-key-not-a-production-secret-1234';
@@ -50,6 +51,8 @@ async function job(
 
 beforeEach(async () => {
   for (const t of [
+    'daily_visitor_dimensions',
+    'cf_daily_dimensions',
     'cf_daily_traffic',
     'daily_visitors',
     'analytics_meta',
@@ -393,6 +396,167 @@ describe('Cloudflare historical traffic', () => {
     expect(await env.DB.prepare('SELECT count(*) FROM daily_visitors').first('count(*)')).toBe(0);
     expect((await handleAdminRequest(req('/api/admin/dashboard'), adminEnv, async () => owner))?.status).toBe(
       200,
+    );
+  });
+});
+
+function dimensionRequest(
+  path = '/?utm_source=Newsletter',
+  referer = 'https://www.google.com/search?q=private',
+  ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36',
+  ip = '192.0.2.101',
+) {
+  const request = new Request(`https://faceriff.com${path}`, {
+    headers: { 'user-agent': ua, 'cf-connecting-ip': ip, referer },
+  });
+  Object.defineProperty(request, 'cf', { value: { country: 'US' } });
+  return request;
+}
+describe('privacy-safe first-visit dimensions', () => {
+  it('parses country, desktop, OS/browser, source and campaign without retaining raw values', () => {
+    expect(visitorDimensions(dimensionRequest())).toEqual({
+      country: 'US',
+      device: 'desktop',
+      os: 'Windows',
+      browser: 'Chrome',
+      referrer: 'google',
+      utm_source: 'newsletter',
+    });
+    expect(visitorDimensions(dimensionRequest('/', 'https://x.com/private/path?secret=a')).referrer).toBe(
+      'x',
+    );
+    expect(visitorDimensions(dimensionRequest('/', 'https://user123.private.example/secret')).referrer).toBe(
+      'other',
+    );
+    expect(visitorDimensions(dimensionRequest('/?utm_source=user%40example.com')).utm_source).toBe(
+      '__redacted__',
+    );
+    expect(visitorDimensions(dimensionRequest('/?utm_source=https%3A%2F%2Fx.com')).utm_source).toBe(
+      '__redacted__',
+    );
+    expect(visitorDimensions(dimensionRequest(`/?utm_source=${'a'.repeat(100)}`)).utm_source).toBe(
+      '__redacted__',
+    );
+    expect(referrerPlatform('notgoogle.com')).toBe('other');
+    expect(referrerPlatform('google.com.evil.example')).toBe('other');
+    expect(referrerPlatform('www.producthunt.com')).toBe('producthunt');
+    expect(visitorDimensions(browser()).referrer).toBe('direct');
+    expect(visitorDimensions(browser()).country).toBe('ZZ');
+    expect(visitorDimensions(browser()).utm_source).toBe('__none__');
+    expect(visitorDimensions(dimensionRequest('/?utm_source=none')).utm_source).toBe('none');
+  });
+  it('distinguishes phones/tablets and browser families', () => {
+    const cases = [
+      [
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 Version/19.0 Mobile/15E148 Safari/604.1',
+        'mobile',
+        'iOS',
+        'Safari',
+      ],
+      [
+        'Mozilla/5.0 (iPad; CPU OS 19_0) AppleWebKit/605.1.15 Version/19.0 Mobile/15E148 Safari/604.1',
+        'tablet',
+        'iOS',
+        'Safari',
+      ],
+      [
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+        'tablet',
+        'iOS',
+        'Safari',
+      ],
+      [
+        'Mozilla/5.0 (Linux; Android 16; Pixel) Chrome/140.0 Mobile Safari/537.36',
+        'mobile',
+        'Android',
+        'Chrome',
+      ],
+      ['Mozilla/5.0 (Linux; Android 16; Tablet) Chrome/140.0 Safari/537.36', 'tablet', 'Android', 'Chrome'],
+      ['Mozilla/5.0 (Windows NT 10.0) Chrome/140.0 Safari/537.36 Edg/140.0', 'desktop', 'Windows', 'Edge'],
+      ['Mozilla/5.0 (Linux x86_64) Gecko/20100101 Firefox/145.0', 'desktop', 'Linux', 'Firefox'],
+    ];
+    for (const [ua, device, os, browser] of cases)
+      expect(visitorDimensions(dimensionRequest('/', '', ua))).toMatchObject({ device, os, browser });
+  });
+  it('atomically counts only one first visit even with parallel duplicates and changed source', async () => {
+    const r = dimensionRequest();
+    await Promise.all(Array.from({ length: 12 }, () => recordVisitor(env.DB, secret, r, now)));
+    await recordVisitor(
+      env.DB,
+      secret,
+      dimensionRequest('/?utm_source=reddit', 'https://reddit.com/r/test'),
+      now,
+    );
+    const counts = await env.DB.prepare(
+      'SELECT dimension,value,count FROM daily_visitor_dimensions ORDER BY dimension',
+    ).all();
+    expect(counts.results).toHaveLength(6);
+    expect(counts.results.every((r) => r.count === 1)).toBe(true);
+    expect(counts.results.find((r) => r.dimension === 'referrer')?.value).toBe('google');
+    expect(counts.results.find((r) => r.dimension === 'utm_source')?.value).toBe('newsletter');
+    expect(await env.DB.prepare('SELECT count(*) n FROM daily_visitors').first('n')).toBe(1);
+    const serialized = JSON.stringify(counts.results);
+    for (const raw of ['192.0.2.101', 'Mozilla', '/search', 'q=private', 'visitor_hash'])
+      expect(serialized).not.toContain(raw);
+  });
+  it('keeps old daily UV and new dimension coverage distinct, then counts the next day', async () => {
+    const r = dimensionRequest();
+    const hash = await visitorHash(secret, shanghaiDay(now), '192.0.2.101', r.headers.get('user-agent')!);
+    await sql('INSERT INTO daily_visitors(day,visitor_hash) VALUES (?,?)', shanghaiDay(now), hash);
+    await recordVisitor(env.DB, secret, r, now);
+    expect(await env.DB.prepare('SELECT count(*) n FROM daily_visitor_dimensions').first('n')).toBe(0);
+    await recordVisitor(env.DB, secret, r, now + 86400000);
+    expect(await env.DB.prepare('SELECT sum(count) n FROM daily_visitor_dimensions').first('n')).toBe(6);
+  });
+  it('retains only 90 days of marginal counts', async () => {
+    await sql(
+      "INSERT INTO daily_visitor_dimensions(day,dimension,value,count) VALUES ('2026-01-01','country','US',50)",
+    );
+    await recordVisitor(env.DB, secret, dimensionRequest(), now);
+    expect(
+      await env.DB.prepare("SELECT count(*) n FROM daily_visitor_dimensions WHERE day='2026-01-01'").first(
+        'n',
+      ),
+    ).toBe(0);
+  });
+  it('separates datasets, applies selected range and renders Chinese labels and coverage', async () => {
+    await recordVisitor(env.DB, secret, dimensionRequest(), now);
+    await sql(
+      "INSERT INTO cf_daily_dimensions(day_utc,dataset,dimension,value,count,fetched_at,is_partial) VALUES ('2026-11-10','httpRequests1dGroups','country','US',300,?,0),('2026-11-11','httpRequestsAdaptiveGroups','device','mobile',200,?,1),('2026-10-29','httpRequestsAdaptiveGroups','device','desktop',900,?,0)",
+      now,
+      now,
+      now,
+    );
+    const d = await loadDashboard(env.DB, range());
+    expect(d.dimensions.firstParty.find((r) => r.dimension === 'country')).toMatchObject({
+      value: 'US',
+      count: 1,
+    });
+    expect(
+      d.dimensions.cloudflare.filter((r) => r.dimension === 'device').reduce((n, r) => n + r.count, 0),
+    ).toBe(200);
+    expect(d.dimensions.coverage.find((r) => r.dimension === 'device')).toMatchObject({
+      fromDay: '2026-10-29',
+      toDay: '2026-11-11',
+      days: 2,
+      partialDays: '2026-11-11',
+    });
+    const html = renderDashboard(d);
+    for (const text of [
+      'US · 美国',
+      '手机',
+      'Google',
+      'newsletter',
+      '100.0%',
+      '请求数（含机器人）',
+      'clientRefererHost',
+      '不是 UV',
+      '不相加',
+    ])
+      expect(html).toContain(text);
+    expect(html).not.toContain('q=private');
+    expect((await handleAdminRequest(req('/api/admin/dashboard'), adminEnv, async () => null))?.status).toBe(
+      404,
     );
   });
 });

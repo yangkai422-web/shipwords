@@ -1,4 +1,6 @@
 import { type Dashboard, dateRange, loadDashboard, visitorReference } from './admin-data';
+import type { DimensionCount, TrafficDimensions } from './admin-dimensions';
+import { dimensionNames } from './visitor-dimensions';
 
 export interface AdminUser {
   email: string;
@@ -53,6 +55,103 @@ const cells = (values: unknown[]) => `<tr>${values.map((v) => `<td>${escapeHtml(
 const table = (heads: string[], body: string) =>
   `<div class="scroll"><table><thead><tr>${heads.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${body || `<tr><td colspan="${heads.length}">此范围暂无记录</td></tr>`}</tbody></table></div>`;
 
+const countries = new Intl.DisplayNames(['zh-CN'], { type: 'region' });
+const dimensionLabel = (dimension: string, value: string) => {
+  if (dimension === 'utm_source')
+    return value === '__none__' ? '未设置' : value === '__redacted__' ? '已过滤（非安全标签）' : value;
+  if (dimension === 'country') {
+    if (value === 'ZZ') return '未知国家 / 地区';
+    try {
+      return `${value} · ${countries.of(value) ?? value}`;
+    } catch {
+      return value;
+    }
+  }
+  return (
+    (
+      {
+        desktop: '电脑',
+        mobile: '手机',
+        tablet: '平板',
+        unknown: '未知 / 未识别',
+        direct: '直接访问 / 未提供来源',
+        internal: '站内来源',
+        other: '其他平台（不保存原始域名）',
+        x: 'X / Twitter',
+        producthunt: 'Product Hunt',
+        reddit: 'Reddit',
+        google: 'Google',
+        bing: 'Bing',
+        baidu: '百度',
+        none: '未设置',
+        redacted: '已过滤（非安全标签）',
+      } as Record<string, string>
+    )[value] ?? value
+  );
+};
+function breakdown(rows: DimensionCount[], dimension: string, unit: string): string {
+  const values = rows
+    .filter((r) => r.dimension === dimension)
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  const total = values.reduce((n, r) => n + r.count, 0);
+  const entries = values
+    .slice(0, 15)
+    .map((r) => [
+      dimensionLabel(dimension, r.value),
+      r.count,
+      total ? `${((100 * r.count) / total).toFixed(1)}%` : '—',
+    ]);
+  const rest = values.slice(15).reduce((n, r) => n + r.count, 0);
+  if (rest) entries.push(['其余项目合计', rest, `${((100 * rest) / total).toFixed(1)}%`]);
+  return (
+    '<h3>' +
+    escapeHtml(dimensionNames[dimension as keyof typeof dimensionNames] ?? dimension) +
+    ' · ' +
+    escapeHtml(unit) +
+    ' ' +
+    (values.length ? total : '未采集 / 无可用记录') +
+    '</h3>' +
+    table(['分类', unit, '占此维度全部记录'], entries.map(cells).join(''))
+  );
+}
+function renderDimensions(d: TrafficDimensions): string {
+  const first = Object.keys(dimensionNames)
+    .map((key) => breakdown(d.firstParty, key, '每日首访 UV'))
+    .join('');
+  const cf = d.coverage
+    .map(
+      (c) =>
+        '<h3>' +
+        escapeHtml(c.dataset) +
+        ' · ' +
+        escapeHtml(dimensionNames[c.dimension as keyof typeof dimensionNames] ?? c.dimension) +
+        '</h3><p>覆盖 ' +
+        escapeHtml(c.fromDay) +
+        ' 至 ' +
+        escapeHtml(c.toDay) +
+        '（' +
+        c.days +
+        ' 个 UTC 日）；抓取 ' +
+        escapeHtml(time(c.fetchedAt)) +
+        '（北京时间）。' +
+        (c.partialDays ? `部分 UTC 日：${escapeHtml(c.partialDays)}。` : '') +
+        '</p>' +
+        breakdown(
+          d.cloudflare.filter((r) => r.dataset === c.dataset),
+          c.dimension,
+          '请求数',
+        ),
+    )
+    .join('');
+  return (
+    '<h2>访客详细来源</h2><div class="notice">来源独立展示，不相加。占比的分母是所选范围、同一来源、同一维度的全部记录（包含未知）；只显示前 15 类，其余合并。各维度是边际统计，不支持国家 × 设备等交叉画像。</div><h2>第一方 · 北京时间日 · 每日首访 UV</h2><p>维度采集启用：' +
+    escapeHtml(time(d.startedAt)) +
+    '（Asia/Shanghai）。仅记录每日首次符合条件的唯一访客；本次升级前已计入当日 UV 的访客不会追补，因此维度合计可能少于原访客合计。90 天滚动保留。</p><p>国家是网络出口位置，VPN / 代理可能改变；设备、系统和浏览器是粗粒度 UA 推测。来源只保存平台分类，未知域名归其他；直接访问也可能是浏览器未提供 Referer，站内来源不等于最初获客渠道。utm_source 单独展示，不覆盖 Referer；只保留最多 40 字符的安全活动标签，不要在标签中放个人信息。</p>' +
+    first +
+    '<h2>Cloudflare · UTC 日 · 请求数（含机器人）</h2><p>全站 zone 请求，含静态文件、API、后台、机器人；不是 UV / 真人数，也不是页面浏览 PV。Adaptive 为可能抽样的估计，可能与 daily countryMap 有差异。不同数据集分别展示，不能相加。范围外是未采集而非零，末日为截至抓取时快照，不会自动刷新。</p><p>历史 Referer：Cloudflare 拒绝此 zone 读取 clientRefererHost，未补录；历史 utm_source：此聚合数据集不提供，未补录。没有伪造直接访问或零值。</p>' +
+    (cf || '<p>尚未导入 Cloudflare 来源维度。</p>')
+  );
+}
 export function renderDashboard(data: Dashboard): string {
   const { totals: t, range: r } = data;
   const kpis = [
@@ -94,6 +193,7 @@ export function renderDashboard(data: Dashboard): string {
   ${data.otherCurrencies.length ? `<div class="notice">非 USD 收款未混入美元统计：${data.otherCurrencies.map((c) => `${escapeHtml(c.currency.toUpperCase())} ${escapeHtml(c.amount.toFixed(2))}（${c.orders} 笔）`).join('；')}</div>` : ''}
   <h2>每日概览</h2><p>订单按创建日；收款按付款日；视频状态 / 成本 / 积分退回按任务创建日汇总，状态会随任务进展更新。注册、订单、任务按北京时间日；CF 列严格保留同名 UTC 日期。访客参考优先第一方，缺失时用 CF；各来源合计分开展示，CF 重叠日仅供参考。</p>
   ${table(['日期', '访客参考', '访客来源 / 日界线', 'CF UV · UTC', 'CF PV · UTC', 'CF 请求 · UTC', '注册', '创建订单', '付款 USD', '收款 USD', '视频', '成功', '待复核', '失败', '取消', '进行中', '退积分任务', 'Yir 次数', 'Yir 成本*', '现金退款 USD†', '差额*'], data.daily.map((d) => cells([d.day, visitorReference(d).value ?? '未采集', d.visitors != null ? '第一方 · UTC+8' : d.cfVisitors != null ? 'Cloudflare · UTC' : '未采集', d.cfVisitors ?? '—', d.cfPageViews ?? '—', d.cfRequests ?? '—', d.signups, d.orders, d.paidOrders, money(d.revenue), d.jobs, d.succeeded, d.review, d.failed, d.canceled, d.active, d.creditRefunds, d.generations, money(d.yirCost), money(d.cashRefund), money(d.margin)])).join(''))}
+  ${renderDimensions(data.dimensions)}
   <h2>当前受限账号 / 模板 (${data.held.length}${data.held.length === 100 ? '+' : ''})</h2><p>全时段未解除的质量重试限制（quality_review_required）。这里只展示，不解锁、不扣积分。</p>
   ${table(['客户', '模板', '受限任务数', '最早任务 · Asia/Shanghai'], data.held.map((h) => cells([h.email, h.modelId, h.jobs, time(h.since)])).join(''))}
   <h2>最近订单（最多 100 笔）</h2><p>同账号视频列仅统计所选日期范围内的任务，<strong>不是逐笔订单的对应关系</strong>：现有系统是先买积分再生成，任务没有 order_id。</p>
