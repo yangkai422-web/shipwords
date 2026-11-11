@@ -17,7 +17,7 @@ import site from '../../site.config';
 export const Route = createRootRoute({
   loader: () => getPublicConfig(),
   head: () => ({
-    meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1' }],
+    meta: [{ charSet: 'utf-8' }, { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' }],
     links: [
       { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
       { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' },
@@ -166,12 +166,13 @@ function Layout() {
           <Link to="/dmca">{m.common_footer_dmca()}</Link>
           <a href={`mailto:${SUPPORT_EMAIL}`}>{m.common_footer_contact()}</a>
         </nav>
-        <nav className="footer-guides" aria-label={m.common_footer_guides()}>
+            <nav className="footer-guides" aria-label={m.common_footer_guides()}>
           {GUIDES.map((guide) => (
             <Link key={guide.path} to={guide.path}>
               {guide.title()}
             </Link>
           ))}
+
         </nav>
       </footer>
       <SignInDialog />

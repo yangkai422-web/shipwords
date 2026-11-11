@@ -3,8 +3,8 @@ import { getBalance, grantCredits, spendCredits } from '@shipwords/core/credits/
 import { createDb } from '@shipwords/core/db/client';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import type { ComposeInput, Composer, FacesInput } from '../src/compose';
-import { appendUpstreamJob, loadJob, markFailed, spendKey } from '../src/lifecycle';
+import type { ComposeInput, Composer, FaceCheckResult, FacesInput } from '../src/compose';
+import { appendUpstreamJob, isQualityRetryHoldError, loadJob, markFailed, spendKey } from '../src/lifecycle';
 import { defineModels, type EffectSegment, effectParts, type ModelDefinition } from '../src/models';
 import { PREP_HEDGE_MS, runGeneration, type StepRunner } from '../src/runner';
 import { jobs } from '../src/schema';
@@ -455,7 +455,7 @@ describe('effect compose', () => {
     error: Error | null = null;
     checks: FacesInput[] = [];
     /** Per-slot similarity returned by each check in turn; returns "swapped" once exhausted. */
-    scores: number[][] = [];
+    scores: (number[] | FaceCheckResult)[] = [];
     checkError: Error | null = null;
     async compose(input: ComposeInput) {
       this.calls.push(input);
@@ -649,6 +649,76 @@ describe('effect compose', () => {
       await db.update(jobs).set({ modelId: 'demo-check' }).where(eq(jobs.id, job.jobId));
       return job;
     }
+
+    function v2Result(verdict: 'pass' | 'review' | 'fail'): FaceCheckResult {
+      const peak = verdict === 'fail' ? 0.863 : verdict === 'review' ? 0.615 : 0.3;
+      return {
+        version: 2, verdict, similarity: [peak], sampleCount: 36,
+        roles: [{
+          index: 0, verdict, visible: 6, valid: 6, peak,
+          strong: verdict === 'fail' ? 3 : 0,
+          strongFraction: verdict === 'fail' ? 0.5 : 0,
+          longestStrongRun: verdict === 'fail' ? 2 : 0,
+          weak: verdict === 'fail' ? 6 : verdict === 'review' ? 3 : 0,
+        }],
+      };
+    }
+
+    it('v2 review: deliver outputs, retain warning, no automatic refund or extra generation', async () => {
+      const { userId, jobId } = await checkJob();
+      const adapter = adapterFor(jobId);
+      const composer = new FakeComposer();
+      composer.scores = [v2Result('review'), v2Result('pass')];
+      await runGeneration(checkDeps(adapter, composer), jobId, durableSteps());
+      const saved = await loadJob(db, jobId);
+      expect(saved).toMatchObject({ status: 'succeeded', errorCode: 'quality_review' });
+      expect(saved?.outputsJson).toBeTruthy();
+      expect(composer.calls).toHaveLength(1);
+      expect(adapter.submits).toHaveLength(2); // Demo has two parts, not a retry.
+      expect((await getBalance(db, userId)).available).toBe(40);
+    });
+
+    it('v2 clear failure: refund once; trigger blocks another paid attempt atomically until reviewed', async () => {
+      const { userId, jobId } = await checkJob();
+      const adapter = adapterFor(jobId);
+      const composer = new FakeComposer();
+      composer.scores = [v2Result('fail')];
+      await runGeneration(checkDeps(adapter, composer), jobId, durableSteps());
+      expect(await loadJob(db, jobId)).toMatchObject({ status: 'failed', errorCode: 'swap_not_applied_v2' });
+      expect((await getBalance(db, userId)).available).toBe(50);
+      expect(composer.calls).toHaveLength(0);
+      const retryId = `${jobId}_retry`;
+      const retryRow = {
+        id: retryId, userId, modelId: 'demo-check', kind: 'video' as const,
+        prompt: '', inputJson: '{}', costCredits: 10, upstream: 'yir',
+      };
+      let blocked: unknown;
+      try {
+        await spendCredits(db, { userId, amount: 10, idemKey: spendKey(retryId), ref: retryId },
+          [db.insert(jobs).values(retryRow)]);
+      } catch (error) { blocked = error; }
+      expect(isQualityRetryHoldError(blocked)).toBe(true);
+      expect(await loadJob(db, retryId)).toBeNull();
+      expect((await getBalance(db, userId)).available).toBe(50);
+      await markFailed(db, jobId, 'failed', 'again', 'again');
+      expect((await getBalance(db, userId)).available).toBe(50);
+      await db.update(jobs).set({ errorCode: 'swap_not_applied_reviewed' }).where(eq(jobs.id, jobId));
+      await spendCredits(db, { userId, amount: 10, idemKey: spendKey(retryId), ref: retryId },
+        [db.insert(jobs).values(retryRow)]);
+      expect((await getBalance(db, userId)).available).toBe(40);
+    });
+
+    it('tiny-desk check outage: deliver with warning instead of enabling an endless refund loop', async () => {
+      const { userId, jobId } = await checkJob();
+      await db.update(jobs).set({ modelId: 'tiny-desk' }).where(eq(jobs.id, jobId));
+      const composer = new FakeComposer();
+      composer.checkError = new Error('temporary checker failure');
+      const adapter = adapterFor(jobId);
+      await runGeneration({ ...checkDeps(adapter, composer), models: defineModels([{ ...checkModel, id: 'tiny-desk' }]) },
+        jobId, durableSteps());
+      expect(await loadJob(db, jobId)).toMatchObject({ status: 'succeeded', errorCode: 'quality_review' });
+      expect((await getBalance(db, userId)).available).toBe(40);
+    });
 
     it('swapped: checks each segment once, only the filled slots, trim over the raw target, stretch over the model duration', async () => {
       const { userId, jobId } = await checkJob();

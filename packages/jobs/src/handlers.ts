@@ -13,6 +13,8 @@ import {
   type StoredOutput,
   settleFailure,
   spendKey,
+  qualityRetryHold,
+  isQualityRetryHoldError,
   upstreamIds,
 } from './lifecycle';
 import { creditsFor, effectParts, type ModelDefinition, referenceRoleOf, sanitizeParameters } from './models';
@@ -166,6 +168,10 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
 
       if (user) {
         const cost = creditsFor(model, parameters);
+        if (cost > 0 && await qualityRetryHold(core.db, user.id, model.id)) {
+          return errorResponse(409, 'quality_review_required',
+            'Your previous video needs a manual review. Your credits are safe; please contact support before trying again.');
+        }
         const row = {
           id: jobId,
           userId: user.id,
@@ -188,6 +194,10 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
             await core.db.insert(jobs).values(row);
           }
         } catch (error) {
+          if (isQualityRetryHoldError(error)) {
+            return errorResponse(409, 'quality_review_required',
+              'Your previous video needs a manual review. Your credits are safe; please contact support before trying again.');
+          }
           if (error instanceof InsufficientCreditsError) {
             return errorResponse(402, 'insufficient_credits', 'Not enough credits.', {
               required: error.required,

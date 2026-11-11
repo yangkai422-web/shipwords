@@ -123,7 +123,10 @@
   "common_job_stage_swap": "正在换上你的乐队",
   "common_job_stage_mix": "最后混音",
   "common_job_eta": "通常 7–10 分钟完成",
-  "common_job_eta_overtime": "比平时慢一些",
+   "common_job_eta_overtime": "比平时慢一些",
+  "common_job_left": "大约还剩 {minutes} 分钟",
+  "common_job_almost": "快好了，比预计稍慢一点",
+  "common_job_progress_aria": "生成进度",
   "common_job_overtime": "还在生成。万一失败，积分会自动退回。",
   "common_job_email": "做好后会把视频发到 {email}，你也可以随时回到这个页面来看。",
   "common_job_email_generic": "做好后会把视频发到你的邮箱，你也可以随时回到这个页面来看。",
@@ -186,5 +189,7 @@
   "common_phone_sending": "正在传…",
   "common_phone_sent": "已传 {count} 张 · 去电脑上看",
   "common_phone_failed": "有一张没传上，再选一次。",
-  "common_phone_expired": "链接过期了，在电脑上换个新二维码再扫。"
+  "common_phone_expired": "链接过期了，在电脑上换个新二维码再扫。",
+  "common_job_dismiss": "关闭",
+  "common_job_dismiss_aria": "关闭这条结果"
 }

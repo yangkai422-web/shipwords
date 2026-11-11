@@ -9,7 +9,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -25,6 +25,7 @@ import {
 
 const run = promisify(execFile);
 const ROOT = '/tmp/compose';
+const KEEP = '/tmp/keep';
 const ID = /^[a-z0-9_-]{1,80}$/;
 
 async function durationOf(file) {
@@ -63,8 +64,10 @@ async function compose(req) {
   await mkdir(dir, { recursive: true });
   const segments = [];
   for (const [i, segment] of manifest.segments.entries()) {
-    const file = join(dir, `in-${i}.mp4`);
-    await save(form, `segment-${i}`, file);
+     const file = join(dir, `in-${i}.mp4`);
+    const kept = form.get(`segment-${i}-kept`);
+    if (typeof kept === 'string' && ID.test(kept)) await copyFile(join(KEEP, manifest.id, `${kept}.mp4`), file);
+    else await save(form, `segment-${i}`, file);
     const duration = await durationOf(file);
     if (!Array.isArray(segment.cuts) || segment.cuts.length === 0) {
       segments.push({ file, duration, target: segment.target, fit: segment.fit });
@@ -113,8 +116,14 @@ async function faces(req) {
   try {
     const video = join(dir, 'video.mp4');
     const original = join(dir, 'original.mp4');
-    await save(form, 'video', video);
+       await save(form, 'video', video);
     await save(form, 'original', original);
+    const keepId = String(form.get('id') ?? '');
+    const keepAs = String(form.get('keep') ?? '');
+    if (ID.test(keepId) && ID.test(keepAs)) {
+      await mkdir(join(KEEP, keepId), { recursive: true });
+      await copyFile(video, join(KEEP, keepId, `${keepAs}.mp4`));
+    }
     const { stdout } = await run('python3', [
       'faces.py',
       video,
@@ -122,10 +131,14 @@ async function faces(req) {
       String(seconds),
       JSON.stringify(points),
     ]);
-    const similarity = JSON.parse(stdout);
-    if (!Array.isArray(similarity) || similarity.length !== points.length)
-      throw new Error('bad faces output');
-    return similarity;
+    const check = JSON.parse(stdout);
+    if (
+      check.version !== 2 || !['pass', 'review', 'fail'].includes(check.verdict) ||
+      !Array.isArray(check.similarity) || check.similarity.length !== points.length ||
+      !check.similarity.every((value) => typeof value === 'number' && Number.isFinite(value)) ||
+      !Array.isArray(check.roles) || check.roles.length !== points.length
+    ) throw new Error('bad faces v2 output');
+    return check;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -143,7 +156,7 @@ createServer(async (req, res) => {
       return sendFile(res, song, (await stat(song)).size);
     }
     if (req.method === 'POST' && req.url === '/faces') {
-      const body = JSON.stringify({ similarity: await faces(req) });
+      const body = JSON.stringify(await faces(req));
       return res.writeHead(200, { 'content-type': 'application/json' }).end(body);
     }
     const match = req.method === 'GET' && req.url?.match(/^\/files\/([a-z0-9_-]{1,80})\/(song|silent)\.mp4$/);
@@ -152,6 +165,11 @@ createServer(async (req, res) => {
       const info = await stat(file).catch(() => null);
       if (!info) return res.writeHead(404).end('not found');
       return sendFile(res, file, info.size);
+    }
+       const kept = req.method === 'GET' && req.url?.match(/^\/kept\/([a-z0-9_-]{1,80})\/([a-z0-9_-]{1,80})$/);
+    if (kept) {
+      const info = await stat(join(KEEP, kept[1], `${kept[2]}.mp4`)).catch(() => null);
+      return info ? res.writeHead(200).end('ok') : res.writeHead(404).end('not found');
     }
     if (req.url === '/health') return res.writeHead(200).end('ok');
     res.writeHead(404).end('not found');

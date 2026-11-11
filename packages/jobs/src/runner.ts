@@ -4,6 +4,7 @@ import {
   appendUpstreamJob,
   loadJob,
   markFailed,
+  markQualityReview,
   markSucceeded,
   recordUpstreamCost,
   SKIPPED_UPSTREAM as SKIPPED,
@@ -87,6 +88,15 @@ export async function runGeneration(deps: RunnerDeps, jobId: string, step: StepR
       await markFailed(deps.db, jobId, 'failed', 'internal_error', message);
       return true;
     });
+  }
+    const release = deps.composer?.release;
+  if (release) {
+    await step
+      .do('release-container', async () => {
+        await release(jobId);
+        return true;
+      })
+      .catch((error: unknown) => deps.log?.('container release failed', { jobId, error: String(error) }));
   }
   // Always settle once at the end: if a step marked the job failed but the refund write failed, on retry that step is skipped because the job is terminal,
   // so settle here on the final state (refunds and quota returns are idempotent).
@@ -233,6 +243,7 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
     if (!model) return { missingModel: job.modelId };
     const parts = partsOf(job, model).map((part) => part.id);
     return {
+      modelId: job.modelId,
       upstream: model.upstream,
       timeoutMinutes: model.timeoutMinutes,
       createdAt: job.createdAt,
@@ -348,7 +359,10 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
           const job = await loadJob(deps.db, jobId);
           if (!job || TERMINAL.includes(job.status)) return { state: 'stopped' as const };
           if (Date.now() > deadline) return { state: 'timeout' as const };
-          return adapter.poll(upstreamJobId, POLL_WAIT_SECONDS);
+          const polled = await adapter.poll(upstreamJobId, POLL_WAIT_SECONDS);
+          if (polled.state !== 'running')
+            deps.log?.('timing', { jobId, stage: 'yir_wait', state: polled.state, msSinceCreated: Date.now() - job.createdAt });
+          return polled;
         },
       );
       if (result.state !== 'running') return result;
@@ -439,26 +453,27 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
     const { original, faces } = check;
     const key = partKeys.get(partId);
     if (!key) return true;
-    // Step name keeps the old round suffix so in-flight jobs replay their cached check.
+    const rolePolicy = setup.modelId === 'tiny-desk';
+    const review = (message: string) => step.do(`review:${partId}:v2`, async () => {
+      await markQualityReview(deps.db, jobId, message);
+      return true;
+    });
     const verdict = await step
       .do(`check:${partId}:0`, async () => {
         const job = await loadJob(deps.db, jobId);
         if (!job || TERMINAL.includes(job.status)) return { stopped: true as const };
         if (!original || !faces) return { scores: [] as number[] };
         const model = deps.models.find((m) => m.id === job.modelId)!;
-        // Parts stored by older versions don't record their slots: check none rather than flag slots the user left as the original.
         const points = (partsOf(job, model)[index]!.slots ?? [])
           .map((slot) => faces[slot])
           .filter((point): point is FacePoint => Boolean(point));
         if (!deps.composer || points.length === 0) return { scores: [] as number[] };
-        const scores = await deps.composer.faces({
-          jobId,
-          key,
-          originalKey: original,
-          points,
-          seconds: check.seconds,
+        const t = Date.now();
+        const checked = await deps.composer.faces({
+          jobId, key, originalKey: original, points, seconds: check.seconds,
         });
-        return { scores };
+        deps.log?.('timing', { jobId, stage: 'face_check', part: partId, ms: Date.now() - t });
+        return Array.isArray(checked) ? { scores: checked } : { scores: checked.similarity, quality: checked };
       })
       .catch((error: unknown) => {
         deps.log?.('swap check errored', { jobId, part: partId, error: String(error) });
@@ -466,11 +481,32 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
       });
     if ('stopped' in verdict) return false;
     if ('errored' in verdict) {
+      if (rolePolicy) {
+        await review(`${partId}: automatic quality check was unavailable; preview the video and contact support if needed.`);
+        return true;
+      }
       await fail('check_failed', `${partId} output could not be checked: ${verdict.errored}`.slice(0, 500));
       return false;
     }
+    if ('quality' in verdict && verdict.quality) {
+      const quality = verdict.quality;
+      deps.log?.('quality check v2', { jobId, part: partId, ...quality });
+      if (quality.verdict === 'fail') {
+        await fail('swap_not_applied_v2', `${partId}: original face remains across multiple visible frames; manual review required.`);
+        return false;
+      }
+      if (quality.verdict === 'review') {
+        await review(`${partId}: some faces may need checking; preview the video and contact support if needed.`);
+      }
+      return true;
+    }
+    // Compatibility with old images and previously cached step results.
     const worst = Math.max(0, ...verdict.scores);
     if (worst < check.maxSimilarity) return true;
+    if (rolePolicy) {
+      await review(`${partId}: legacy quality score ${worst}; preview the video and contact support if needed.`);
+      return true;
+    }
     deps.log?.('swap not applied', { jobId, part: partId, scores: verdict.scores });
     await fail('swap_not_applied', `${partId} still shows an original face (similarity ${worst})`);
     return false;
@@ -491,6 +527,7 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
         if (existing) return { upstreamJobId: existing };
         // Prep may have used up the time: submitting video segments now would just waste upstream spend.
         if (index > 0 && Date.now() > deadline) return { timeout: true as const };
+                const submitStart = Date.now();
         try {
           const { upstreamJobId } = await adapter.submit(
             submitInput(job, index),
@@ -501,6 +538,7 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
             await adapter.cancel(upstreamJobId).catch(() => undefined);
             return { done: true as const };
           }
+                    deps.log?.('timing', { jobId, stage: 'submit', part: partId, ms: Date.now() - submitStart });
           return { upstreamJobId };
         } catch (error) {
           if (error instanceof UpstreamError && !error.retryable && index < prepCount) {
@@ -593,9 +631,12 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
         continue;
       }
       const start = outputs.length;
-      const stored = await step.do(name('store', partId), () =>
-        storeOutputs(deps, jobId, result.files, start),
-      );
+      const stored = await step.do(name('store', partId), async () => {
+        const t = Date.now();
+        const files = await storeOutputs(deps, jobId, result.files, start);
+        deps.log?.('timing', { jobId, stage: 'store', part: partId, ms: Date.now() - t });
+        return files;
+      });
       if (stored[0]) partKeys.set(partId, stored[0].key);
       outputs.push(...stored);
       const check = setup.checks?.[partId];
@@ -605,7 +646,12 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
   let finalOutputs = outputs;
   if (setup.compose) {
     // Compose failures throw: once Workflow retries run out the fallback fails the job with a full refund. Retries write the same keys, so it's idempotent.
-    const composed = await step.do('compose', () => composeOutputs(deps, jobId, partKeys, outputs.length));
+      const composed = await step.do('compose', async () => {
+      const t = Date.now();
+      const result = await composeOutputs(deps, jobId, partKeys, outputs.length);
+      deps.log?.('timing', { jobId, stage: 'compose', ms: Date.now() - t });
+      return result;
+    });
     if (!composed) return;
     finalOutputs = composed;
   }

@@ -11,7 +11,7 @@ export const Route = createFileRoute('/sitemap.xml')({
       GET: () =>
         sitemapXml(
           site,
-          PAGES.map((path) => ({ path })),
+              PAGES.map((path) => (path === '/' ? { path, lastmod: '2026-11-08' } : { path })),
         ),
     },
   },

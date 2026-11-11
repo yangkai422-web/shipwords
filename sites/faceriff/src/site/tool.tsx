@@ -120,6 +120,7 @@ const root = getRouteApi('__root__');
 // Stage photos and the consent are kept in sessionStorage, so the stage survives leaving for checkout or a reload.
 const PHOTOS_KEY = 'faceriff:photos';
 const CONSENT_KEY = 'faceriff:consent';
+const DISMISSED_KEY = 'faceriff:dismissed-jobs';
 
 function store(key: string, value: unknown) {
   try {
@@ -134,6 +135,22 @@ function load<T>(key: string): T | null {
     return null;
   }
 }
+
+function loadDismissed(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDismissed(ids: string[]) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(ids.slice(0, 100)));
+  } catch {}
+}
+
 
 // The home page's return banner and the generator share one job list, so the home page calls useGeneration and passes it in.
 export function TinyDeskTool({
@@ -161,6 +178,19 @@ export function TinyDeskTool({
   const [resumed, setResumed] = useState(false);
   // Generating again while a job runs needs a confirm: output takes minutes, and a user who thinks nothing happened would spend another video's credits.
   const [confirmAnother, setConfirmAnother] = useState(false);
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  useEffect(() => {
+    setDismissed(loadDismissed());
+  }, []);
+  function dismissJob(id: string) {
+    setDismissed((current) => {
+      if (current.includes(id)) return current;
+      const next = [id, ...current].slice(0, 100);
+      saveDismissed(next);
+      return next;
+    });
+  }
+  const visibleJobs = jobs.filter((job) => !dismissed.includes(job.id));
   const rendering = jobs.some((job) => job.status === 'queued' || job.status === 'submitted');
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const photosRef = useRef(photos);
@@ -290,8 +320,8 @@ export function TinyDeskTool({
     for (const slot of SLOTS) {
       const seat = SEATS[slot.id]!;
       const distance = Math.hypot(x - (seat.x / 100) * width, y - (seat.y / 100) * height);
-      // Face slots have a 2.6rem minimum width; on narrow screens the radius uses that floor.
-      const radius = Math.max((seat.size / 100) * width, 41.6) / 2;
+      // Face slots have a 2.75rem minimum width (~44px); on narrow screens the radius uses that floor.
+      const radius = Math.max((seat.size / 100) * width, 44) / 2;
       if (distance <= radius * DROP_REACH && distance < bestDistance) {
         best = slot.id;
         bestDistance = distance;
@@ -590,14 +620,23 @@ export function TinyDeskTool({
       {confirmAnother && <p className="notice">{m.common_tool_confirm_another({ price: PRICE })}</p>}
       {uploadError && <p className="error">{uploadError}</p>}
       {error && <GenerationError code={error.code} message={error.message} />}
-      {jobs.length > 0 && (
+      {visibleJobs.length > 0 && (
         <div className="results" id="my-videos">
-          {jobs.slice(0, SHOWN).map((job) => (
-            <JobCard key={job.id} job={job} email={session.data?.user.email} />
+          {visibleJobs.slice(0, SHOWN).map((job) => (
+            <JobCard
+              key={job.id}
+              job={job}
+              email={session.data?.user.email}
+              onDismiss={
+                job.status === 'failed' || job.status === 'canceled' || job.status === 'succeeded'
+                  ? () => dismissJob(job.id)
+                  : undefined
+              }
+            />
           ))}
         </div>
       )}
-      {jobs.length > SHOWN && (
+      {visibleJobs.length > SHOWN && (
         <p className="results-more">
           <button type="button" className="link-button" onClick={openAccount}>
             {m.common_tool_see_all({ count: jobs.length })}
@@ -653,8 +692,13 @@ const RECENT_MS = 24 * 3600_000;
 
 /** Return banner above the fold: when a video is generating or finished within a day, a click jumps to the results below the generator. */
 export function ReturnNotice({ jobs }: { jobs: PublicJob[] }) {
-  const rendering = jobs.some((job) => job.status === 'queued' || job.status === 'submitted');
-  const latest = jobs[0];
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  useEffect(() => {
+    setDismissed(loadDismissed());
+  }, [jobs]);
+  const visible = jobs.filter((job) => !dismissed.includes(job.id));
+  const rendering = visible.some((job) => job.status === 'queued' || job.status === 'submitted');
+  const latest = visible[0];
   const ready =
     latest?.status === 'succeeded' &&
     latest.finishedAt !== null &&
@@ -707,13 +751,29 @@ const STAGES = [
 ];
 // Only say it is slower than usual one minute past the 10-minute estimate.
 const OVERTIME_AFTER = 660;
+/** Expected total render time in seconds. Tune from the runner's timing logs. */
+const EXPECTED_SECONDS = 420;
+
+/** Estimated percent: linear to 90% at EXPECTED_SECONDS, then eases toward 95% and holds. */
+function estimatedProgress(elapsed: number) {
+  if (elapsed < EXPECTED_SECONDS) return (90 * elapsed) / EXPECTED_SECONDS;
+  return 95 - 5 * Math.exp(-(elapsed - EXPECTED_SECONDS) / 120);
+}
 
 function formatElapsed(seconds: number) {
   const s = Math.floor(seconds);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function JobCard({ job, email }: { job: PublicJob; email?: string }) {
+function JobCard({
+  job,
+  email,
+  onDismiss,
+}: {
+  job: PublicJob;
+  email?: string;
+  onDismiss?: () => void;
+}) {
   const active = job.status === 'queued' || job.status === 'submitted';
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -724,9 +784,24 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
   const elapsed = Math.max(0, (now - job.createdAt) / 1000);
   const stage = STAGES.filter((s) => elapsed >= s.after).at(-1)!;
   const overtime = elapsed >= OVERTIME_AFTER;
+    const percent = Math.round(estimatedProgress(elapsed));
+  const minutesLeft = Math.max(1, Math.ceil((EXPECTED_SECONDS - elapsed) / 60));
+  const remaining =
+    elapsed < EXPECTED_SECONDS ? m.common_job_left({ minutes: String(minutesLeft) }) : m.common_job_almost();
 
   return (
     <article className={`job${job.outputs[0] ? ' job-done' : ''}${job.status === 'failed' && !job.outputs[0] ? ' job-failed' : ''}`}>
+      {onDismiss && (
+        <button
+          type="button"
+          className="job-dismiss"
+          onClick={onDismiss}
+          aria-label={m.common_job_dismiss_aria()}
+          title={m.common_job_dismiss()}
+        >
+          ×
+        </button>
+      )}
       {active && (
         <div className="job-pending">
           <p>
@@ -734,8 +809,20 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
             {stage.text()}
           </p>
           {/* Elapsed time comes from the client clock, so it always differs from the server-rendered value */}
+            <div
+            className="job-progress"
+            role="progressbar"
+            aria-label={m.common_job_progress_aria()}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-valuetext={`${percent}% · ${remaining}`}
+            suppressHydrationWarning
+          >
+            <span className="job-progress-bar" style={{ width: `${percent}%` }} suppressHydrationWarning />
+          </div>
           <p className="mono" suppressHydrationWarning>
-            {formatElapsed(elapsed)} · {overtime ? m.common_job_eta_overtime() : m.common_job_eta()}
+            {formatElapsed(elapsed)} · {percent}% · {remaining}
           </p>
           {overtime && <p className="muted">{m.common_job_overtime()}</p>}
           <p className="muted">{email ? m.common_job_email({ email }) : m.common_job_email_generic()}</p>
@@ -763,6 +850,11 @@ function JobCard({ job, email }: { job: PublicJob; email?: string }) {
           {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
           </div>
         </>
+      )}
+      {job.status === 'succeeded' && job.error?.code === 'quality_review' && (
+        <p className="notice">
+          Your video is ready, but some faces may need checking. Please preview it and contact support if the swap is not right.
+        </p>
       )}
       {job.status === 'failed' && <p className="error job-failed-text">{m.common_job_failed()}</p>}
       {job.status === 'canceled' && <p className="muted">{m.common_job_canceled()}</p>}

@@ -36,6 +36,28 @@ export interface FacesInput {
   seconds: number;
 }
 
+export type QualityVerdict = 'pass' | 'review' | 'fail';
+
+export interface FaceRoleResult {
+  index: number;
+  verdict: QualityVerdict;
+  visible: number;
+  valid: number;
+  peak: number;
+  strong: number;
+  strongFraction: number;
+  longestStrongRun: number;
+  weak: number;
+}
+
+export interface FaceCheckResult {
+  version: 2;
+  verdict: QualityVerdict;
+  similarity: number[];
+  roles: FaceRoleResult[];
+  sampleCount: number;
+}
+
 export interface Composer {
   /** Repeated calls with the same jobId give the same result, safe for Workflow retries. */
   compose(input: ComposeInput): Promise<{ song: ArrayBuffer; silent: ArrayBuffer }>;
@@ -43,7 +65,14 @@ export interface Composer {
    * Output check: for each point, the highest face similarity (cosine, 0–1) between the original person there and any face in the output.
    * High means the original person is still in the output (not swapped). Same order as points. Read-only, repeatable.
    */
-  faces(input: FacesInput): Promise<number[]>;
+  faces(input: FacesInput): Promise<number[] | FaceCheckResult>;
+  /** Destroy the job's container if still running. Idempotent, never throws. */
+  release?(jobId: string): Promise<void>;
+}
+
+/** File name the container keeps the checked output under, so compose can reuse it without a second upload. */
+function keepName(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 80);
 }
 
 async function blobOf(bucket: R2Bucket, key: string): Promise<Blob> {
@@ -67,31 +96,43 @@ async function destroyCompose(stub: DurableObjectStub): Promise<void> {
  * Workflow step results are persisted, so a retry restarts a fresh container rather than reading old files.
  */
 export function containerComposer(namespace: DurableObjectNamespace, bucket: R2Bucket): Composer {
+  const stubFor = (jobId: string) => namespace.get(namespace.idFromName(jobId));
   return {
     async compose(input) {
-      const form = new FormData();
-      form.set(
-        'manifest',
-        JSON.stringify({
-          id: input.jobId,
-          segments: input.segments.map(({ target, fit, cuts }) => ({
-            target,
-            fit,
-            ...(cuts ? { cuts } : {}),
-          })),
-          audio: { start: input.audio.start, duration: input.audio.duration },
-          width: input.width,
-          height: input.height,
-          fps: input.fps,
-        }),
-      );
-      for (const [index, segment] of input.segments.entries()) {
-        form.set(`segment-${index}`, await blobOf(bucket, segment.key), `${index}.mp4`);
-      }
-      form.set('audio', await blobOf(bucket, input.audio.key), 'audio');
-
-      const stub = namespace.get(namespace.idFromName(input.jobId));
+      const stub = stubFor(input.jobId);
       try {
+        const form = new FormData();
+        form.set(
+          'manifest',
+          JSON.stringify({
+            id: input.jobId,
+            segments: input.segments.map(({ target, fit, cuts }) => ({
+              target,
+              fit,
+              ...(cuts ? { cuts } : {}),
+            })),
+            audio: { start: input.audio.start, duration: input.audio.duration },
+            width: input.width,
+            height: input.height,
+            fps: input.fps,
+          }),
+        );
+        let reused = 0;
+        for (const [index, segment] of input.segments.entries()) {
+          const kept = keepName(segment.key);
+          const has = await stub
+            .fetch(`http://compose/kept/${input.jobId}/${kept}`)
+            .then((r) => r.ok)
+            .catch(() => false);
+          if (has) {
+            form.set(`segment-${index}-kept`, kept);
+            reused++;
+          } else {
+            form.set(`segment-${index}`, await blobOf(bucket, segment.key), `${index}.mp4`);
+          }
+        }
+        form.set('audio', await blobOf(bucket, input.audio.key), 'audio');
+        console.log('compose inputs', { jobId: input.jobId, reused, segments: input.segments.length });
         const composed = await stub.fetch('http://compose/compose', { method: 'POST', body: form });
         if (!composed.ok) throw new Error(`compose failed: ${composed.status} ${await composed.text()}`);
         const song = await composed.arrayBuffer();
@@ -106,23 +147,53 @@ export function containerComposer(namespace: DurableObjectNamespace, bucket: R2B
       const form = new FormData();
       form.set('seconds', String(input.seconds));
       form.set('points', JSON.stringify(input.points));
+      form.set('id', input.jobId);
+      form.set('keep', keepName(input.key));
       form.set('video', await blobOf(bucket, input.key), 'video.mp4');
       form.set('original', await blobOf(bucket, input.originalKey), 'original.mp4');
-      const stub = namespace.get(namespace.idFromName(input.jobId));
+      const stub = stubFor(input.jobId);
       try {
         const response = await stub.fetch('http://compose/faces', { method: 'POST', body: form });
         if (!response.ok) throw new Error(`faces failed: ${response.status} ${await response.text()}`);
-        const { similarity } = (await response.json()) as { similarity?: unknown };
+        const result = (await response.json()) as Partial<FaceCheckResult>;
+        const similarity = result.similarity;
         if (
           !Array.isArray(similarity) ||
           similarity.length !== input.points.length ||
-          !similarity.every((value) => typeof value === 'number')
-        )
-          throw new Error('faces returned no scores');
-        return similarity as number[];
-      } finally {
+          !similarity.every((value) => typeof value === 'number' && Number.isFinite(value))
+        ) throw new Error('faces returned no scores');
+        // Previous images return only similarity; the new Worker handles that conservatively.
+        if (result.version !== 2) return similarity;
+        if (
+          !['pass', 'review', 'fail'].includes(result.verdict ?? '') ||
+          !Array.isArray(result.roles) || result.roles.length !== input.points.length ||
+          typeof result.sampleCount !== 'number' || !Number.isInteger(result.sampleCount) || result.sampleCount < 1 ||
+          !result.roles.every((role, index) => role && role.index === index &&
+            ['pass', 'review', 'fail'].includes(role.verdict) &&
+            Number.isInteger(role.visible) && Number.isInteger(role.valid) &&
+            role.visible >= role.valid && role.valid >= 0 &&
+            typeof role.peak === 'number' && Number.isFinite(role.peak) &&
+            role.peak >= 0 && role.peak <= 1 &&
+            Number.isInteger(role.strong) && role.strong >= 0 && role.strong <= role.valid &&
+            typeof role.strongFraction === 'number' && Number.isFinite(role.strongFraction) &&
+            role.strongFraction >= 0 && role.strongFraction <= 1 &&
+            Number.isInteger(role.longestStrongRun) && role.longestStrongRun >= 0 &&
+            Number.isInteger(role.weak) && role.weak >= 0 && role.weak <= role.valid)
+        ) throw new Error('faces returned invalid v2 result');
+        return {
+          version: 2,
+          verdict: result.verdict!,
+          similarity,
+          roles: result.roles,
+          sampleCount: result.sampleCount,
+        };
+      } catch (error) {
         await destroyCompose(stub);
+        throw error;
       }
+    },
+    async release(jobId) {
+      await destroyCompose(stubFor(jobId));
     },
   };
 }

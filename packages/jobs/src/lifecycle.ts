@@ -12,6 +12,40 @@ const ACTIVE: JobRow['status'][] = ['queued', 'submitted'];
 
 export const spendKey = (jobId: string) => `job:${jobId}`;
 
+/** Keep the video deliverable, but retain a visible quality warning after success. */
+export async function markQualityReview(db: Db, jobId: string, message: string): Promise<void> {
+  await db
+    .update(jobs)
+    .set({ errorCode: 'quality_review', errorMessage: message.slice(0, 500) })
+    .where(and(eq(jobs.id, jobId), inArray(jobs.status, ACTIVE)));
+}
+
+/** A failed paid quality check remains on hold until a human clears that job. */
+export async function qualityRetryHold(db: Db, userId: string, modelId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(
+      eq(jobs.userId, userId),
+      eq(jobs.modelId, modelId),
+      eq(jobs.status, 'failed'),
+      inArray(jobs.errorCode, ['swap_not_applied', 'swap_not_applied_v2']),
+    ))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/** Drizzle/D1 may put the trigger message in an Error.cause chain. */
+export function isQualityRetryHoldError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
+    const item = current as { message?: unknown; cause?: unknown };
+    if (typeof item.message === 'string' && item.message.includes('quality_review_required')) return true;
+    current = item.cause;
+  }
+  return false;
+}
+
 export async function loadJob(db: Db, jobId: string): Promise<JobRow | null> {
   const [row] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
   return row ?? null;

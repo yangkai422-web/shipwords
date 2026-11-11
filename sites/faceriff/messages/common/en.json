@@ -123,7 +123,10 @@
   "common_job_stage_swap": "Swapping in your band",
   "common_job_stage_mix": "Final mix",
   "common_job_eta": "usually ready in 7–10 min",
-  "common_job_eta_overtime": "taking a bit longer than usual",
+   "common_job_eta_overtime": "taking a bit longer than usual",
+  "common_job_left": "About {minutes} min left",
+  "common_job_almost": "Almost done, taking a bit longer",
+  "common_job_progress_aria": "Rendering progress",
   "common_job_overtime": "Still rendering. If it fails, your credits come back automatically.",
   "common_job_email": "We'll email the video to {email} when it's ready, or come back to this page anytime to watch it.",
   "common_job_email_generic": "We'll email you the video when it's ready, or come back to this page anytime to watch it.",
@@ -186,5 +189,7 @@
   "common_phone_sending": "Sending…",
   "common_phone_sent": "{count} sent · check your computer",
   "common_phone_failed": "A photo didn't make it. Pick it again.",
-  "common_phone_expired": "This link expired. Get a new code on your computer and scan again."
+  "common_phone_expired": "This link expired. Get a new code on your computer and scan again.",
+  "common_job_dismiss": "Dismiss",
+  "common_job_dismiss_aria": "Dismiss this result"
 }

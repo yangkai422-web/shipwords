@@ -127,7 +127,13 @@ export const Route = createFileRoute('/')({
           mainEntity: FAQ.map((item) => ({
             '@type': 'Question',
             name: item.q(),
-            acceptedAnswer: { '@type': 'Answer', text: item.a() },
+                        acceptedAnswer: {
+              '@type': 'Answer',
+              text:
+                item.q === m.home_faq_free_q
+                  ? `${item.a()} For what the free routes (CapCut, free credits, other generators) can and can't do, see https://faceriff.com/tiny-desk-ai-free.`
+                  : item.a(),
+            },
           })),
         },
       ],
@@ -198,6 +204,50 @@ function SoundClip({ clip, tag, label }: { clip: string; tag: string; label: str
         </svg>
       </button>
     </div>
+  );
+}
+
+// Shot-strip clips: phones wait until the strip is on screen before autoplaying (less decode work); desktop autoplays as before.
+function ShotClip({ clip, label }: { clip: string; label: string }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [shouldPlay, setShouldPlay] = useState(false);
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
+    const mobile = window.matchMedia('(max-width: 760px)').matches;
+    if (!mobile) {
+      setShouldPlay(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([entry]) => {
+          if (entry?.isIntersecting) {
+          setShouldPlay(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: '80px', threshold: 0.2 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  useEffect(() => {
+    const el = video.current;
+    if (!el || !shouldPlay) return;
+    void el.play().catch(() => undefined);
+  }, [shouldPlay]);
+  return (
+    <video
+      ref={video}
+      src={`/media/${clip}.mp4`}
+      poster={`/media/${clip}.jpg`}
+      autoPlay={shouldPlay}
+      muted
+      loop
+      playsInline
+      preload={shouldPlay ? 'metadata' : 'none'}
+      aria-label={label}
+    />
   );
 }
 
@@ -314,16 +364,7 @@ function HomePage() {
         <ol className="shots">
           {SHOTS.map((shot) => (
             <li key={shot.time}>
-              <video
-                src={`/media/${shot.clip}.mp4`}
-                poster={`/media/${shot.clip}.jpg`}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="none"
-                aria-label={m.home_shot_label({ name: shot.name() })}
-              />
+              <ShotClip clip={shot.clip} label={m.home_shot_label({ name: shot.name() })} />
               <span className="mono">{shot.time}</span>
               <strong>{shot.name()}</strong>
               <span className="muted">{shot.who()}</span>
@@ -342,8 +383,10 @@ function HomePage() {
             </li>
           ))}
         </ol>
-        <p className="steps-more">
+             <p className="steps-more">
           <Link to="/how-to-make-outstanding-tiny-desk-ai-video">{m.home_how_guide_link()}</Link>
+          {' · '}
+          <a href="/tiny-desk-ai-free">Free vs paid options</a>
         </p>
       </section>
 
@@ -390,7 +433,15 @@ function HomePage() {
         {FAQ.map((item) => (
           <details key={item.q()}>
             <summary>{item.q()}</summary>
-            <p>{item.a()}</p>
+                        <p>
+              {item.a()}
+              {item.q === m.home_faq_free_q && (
+                <>
+                  {' '}For what the free routes (CapCut, free credits, other generators) can and can't do, see{' '}
+                  <a href="/tiny-desk-ai-free">what the free Tiny Desk AI options actually do</a>.
+                </>
+              )}
+            </p>
           </details>
         ))}
       </section>

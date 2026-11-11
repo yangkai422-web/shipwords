@@ -194,6 +194,11 @@ function FreePage() {
         {m.guides_free_pricing_after()}
       </p>
 
+           <p className="muted">
+        More AI video tools are listed on{' '}
+        <a href="https://aidirs.org" target="_blank" rel="noopener">AIDirs</a>.
+      </p>
+
       <Faq title={m.guides_free_faq_title()} items={faq()} />
     </GuidePage>
   );
