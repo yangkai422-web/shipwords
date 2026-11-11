@@ -7,6 +7,7 @@ import site from '../site.config';
 import models from '../site.models';
 import { core } from './core.server';
 import { handleAdminRequest } from './lib/admin.server';
+import { handleAdminLogin } from './lib/admin-login.server';
 import { isVisitorRequest, recordVisitor } from './lib/visitors';
 
 // Worker entry: pages and API go to TanStack Start, plus the Workflow class for generation jobs and the compose container.
@@ -55,6 +56,8 @@ export default {
       url.hostname = 'faceriff.com';
       return Response.redirect(url.toString(), 301);
     }
+    const adminLogin = await handleAdminLogin(request, env, (authRequest) => core.handleAuth(authRequest));
+    if (adminLogin) return adminLogin;
     // Authorization happens in the Worker before any HTML or JSON can be sent.
     const admin = await handleAdminRequest(request, env, async (req) => {
       const session = await core.auth.api.getSession({ headers: req.headers });

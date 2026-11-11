@@ -247,7 +247,7 @@ describe('server access and output protection', () => {
       expect(isAdmin(u, owner.email)).toBe(false);
     expect(isAdmin(owner, undefined)).toBe(false);
   });
-  it('returns 404 for every unauthorized admin surface before accessing D1 or R2', async () => {
+  it('redirects anonymous dashboard visits but denies data and signed-in non-admins before D1 or R2', async () => {
     for (const path of [
       '/admin',
       '/admin/',
@@ -258,8 +258,10 @@ describe('server access and output protection', () => {
     ]) {
       for (const u of [null, { ...owner, email: 'customer@example.com' }]) {
         const r = await handleAdminRequest(req(path), adminEnv, async () => u);
-        expect(r?.status).toBe(404);
-        expect(await r?.text()).toBe('Not found');
+        const redirect = u == null && ['/admin', '/admin/'].includes(path);
+        expect(r?.status).toBe(redirect ? 302 : 404);
+        expect(await r?.text()).toBe(redirect ? '' : 'Not found');
+        if (redirect) expect(r?.headers.get('location')).toBe('/admin/login');
         expect(r?.headers.get('cache-control')).toContain('no-store');
       }
     }

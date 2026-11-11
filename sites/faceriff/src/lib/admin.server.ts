@@ -1,3 +1,4 @@
+import { isAllowlistedEmail } from './admin-access';
 import { type Dashboard, dateRange, loadDashboard, visitorReference } from './admin-data';
 import type { DimensionCount, TrafficDimensions } from './admin-dimensions';
 import { dimensionNames } from './visitor-dimensions';
@@ -13,13 +14,9 @@ export interface AdminEnv {
 }
 export type GetAdminUser = (request: Request) => Promise<AdminUser | null>;
 export function isAdmin(user: AdminUser | null, allowlist: string | undefined): boolean {
-  const emails = (allowlist ?? '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return !!user?.emailVerified && emails.includes(user.email.trim().toLowerCase());
+  return !!user?.emailVerified && isAllowlistedEmail(user.email, allowlist);
 }
-const secureHeaders = {
+export const secureHeaders = {
   'cache-control': 'private, no-store, max-age=0',
   'x-robots-tag': 'noindex, nofollow, noarchive',
   'x-content-type-options': 'nosniff',
@@ -30,7 +27,7 @@ const secureHeaders = {
 };
 const html = (body: string, status = 200) =>
   new Response(body, { status, headers: { ...secureHeaders, 'content-type': 'text/html; charset=utf-8' } });
-const escapeHtml = (s: unknown) =>
+export const escapeHtml = (s: unknown) =>
   String(s ?? '').replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
@@ -224,6 +221,8 @@ export async function handleAdminRequest(
   } catch {
     return html('登录状态暂时不可用，请稍后重试。', 503);
   }
+  if (!user && ['/admin', '/admin/'].includes(url.pathname) && ['GET', 'HEAD'].includes(request.method))
+    return new Response(null, { status: 302, headers: { ...secureHeaders, location: '/admin/login' } });
   if (!isAdmin(user, env.ADMIN_EMAILS)) return html('Not found', 404);
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return new Response(null, { status: 405, headers: { ...secureHeaders, allow: 'GET, HEAD' } });
