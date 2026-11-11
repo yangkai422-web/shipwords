@@ -5,6 +5,9 @@ import handler from '@tanstack/react-start/server-entry';
 import { paraglideMiddleware } from '~/paraglide/server.js';
 import site from '../site.config';
 import models from '../site.models';
+import { core } from './core.server';
+import { handleAdminRequest } from './lib/admin.server';
+import { isVisitorRequest, recordVisitor } from './lib/visitors';
 
 // Worker entry: pages and API go to TanStack Start, plus the Workflow class for generation jobs and the compose container.
 export const GenerationWorkflow = defineGenerationWorkflow(models, site);
@@ -45,19 +48,33 @@ export class ComposeContainer extends Container {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // www.faceriff.com -> apex (301, path and query kept).
     const url = new URL(request.url);
     if (url.hostname === 'www.faceriff.com') {
       url.hostname = 'faceriff.com';
       return Response.redirect(url.toString(), 301);
     }
+    // Authorization happens in the Worker before any HTML or JSON can be sent.
+    const admin = await handleAdminRequest(request, env, async (req) => {
+      const session = await core.auth.api.getSession({ headers: req.headers });
+      return session ? { email: session.user.email, emailVerified: session.user.emailVerified } : null;
+    });
+    if (admin) return admin;
     // Rybbit stats go through /stats/ on this site and are forwarded to the collector here.
     const stats = await proxyRybbit(request, env.RYBBIT_UPSTREAM);
     if (stats) return stats;
     // Only local dev picks the locale from a cookie (Chinese review); production is English only and passes requests straight to TanStack Start.
-    return import.meta.env.DEV
+    const response = await (import.meta.env.DEV
       ? paraglideMiddleware(request, () => handler.fetch(request))
-      : handler.fetch(request);
+      : handler.fetch(request));
+    if (!import.meta.env.DEV && isVisitorRequest(request, response)) {
+      ctx.waitUntil(
+        recordVisitor(env.DB, env.BETTER_AUTH_SECRET, request).catch(() => {
+          console.error(JSON.stringify({ event: 'visitor_tracking_failed' }));
+        }),
+      );
+    }
+    return response;
   },
 } satisfies ExportedHandler<Env>;

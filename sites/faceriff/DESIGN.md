@@ -23,3 +23,7 @@ FaceRiff is a meme video generator: each meme is a fixed template where visitors
 ## Adding the next meme
 
 One meme = one landing route (`src/routes/<meme-slug>.tsx`), one model entry in `site.models.ts` with its R2 assets under `assets/<meme>/`, its media in `public/media/<meme>/`, and its own message keys. Home keeps Tiny Desk as meme #1 and links to the others.
+
+## Owner dashboard
+
+`/admin` is a standalone server-rendered, Simplified Chinese operations page. Reuse navy/panel/coral/lime, system fonts (no external requests), responsive KPI cards, horizontally scrollable numeric tables, and clear status badges. Read-only, no customer photos, prompts or full emails. Date windows and all timestamps use Asia/Shanghai. Daily traffic before collection begins must be unavailable, never invented zeros.

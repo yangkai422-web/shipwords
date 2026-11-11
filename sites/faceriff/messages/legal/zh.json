@@ -14,7 +14,7 @@
   "legal_privacy_collect_payments_label": "付款：",
   "legal_privacy_collect_payments": "结账由 Stripe 处理。我们收到你的邮箱、买了什么和金额，绝不会拿到完整卡号。",
   "legal_privacy_collect_technical_label": "技术数据：",
-  "legal_privacy_collect_technical": "托管服务商记录的 IP 地址、浏览器和请求日志，以及带你来的链接或活动标签，以便我们知道哪些链接有效。",
+  "legal_privacy_collect_technical": "托管服务商记录的 IP 地址、浏览器和请求日志，以及带你来的链接或活动标签，以便我们知道哪些链接有效。我们还将 IP、浏览器标识和北京时间日期做加密密钥哈希以统计每日访客；该计数不存原始 IP 或浏览器标识，不使用 Cookie，按 90 天滚动窗口保留每日化名，有新访问时清理。",
   "legal_privacy_processors_heading": "谁处理这些数据",
   "legal_privacy_processors_cloudflare": "Cloudflare：托管、文件存储和登录邮件",
   "legal_privacy_processors_stripe": "Stripe：付款",

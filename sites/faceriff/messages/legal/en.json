@@ -14,7 +14,7 @@
   "legal_privacy_collect_payments_label": "Payments:",
   "legal_privacy_collect_payments": "Stripe handles checkout. We receive your email, what you bought and the amount, never your full card number.",
   "legal_privacy_collect_technical_label": "Technical data:",
-  "legal_privacy_collect_technical": "IP address, browser and request logs from our hosting provider, and the link or campaign tag that brought you here, so we know which links work.",
+  "legal_privacy_collect_technical": "IP address, browser and request logs from our hosting provider, and the link or campaign tag that brought you here, so we know which links work. We also count daily visitors using a keyed hash of IP address, browser user-agent and day (Asia/Shanghai). This counter stores no raw IP or user-agent, uses no cookie, and keeps daily pseudonyms in a rolling 90-day window, cleaned on subsequent visits.",
   "legal_privacy_processors_heading": "Who processes it",
   "legal_privacy_processors_cloudflare": "Cloudflare: hosting, file storage and sign-in emails",
   "legal_privacy_processors_stripe": "Stripe: payments",

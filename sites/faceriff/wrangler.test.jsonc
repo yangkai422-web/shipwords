@@ -1,0 +1,10 @@
+// Isolated local resources only. Never deploy this configuration.
+{
+  "name": "faceriff-admin-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "secrets": { "required": [] },
+  "d1_databases": [{ "binding": "DB", "database_name": "test", "database_id": "local" }],
+  "r2_buckets": [{ "binding": "OUTPUTS", "bucket_name": "test-outputs" }]
+}
