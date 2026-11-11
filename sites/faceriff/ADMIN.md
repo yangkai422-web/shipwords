@@ -7,11 +7,11 @@
 
 ## Metrics
 
-All dates and displayed times are Asia/Shanghai (UTC+8). Presets include today and the preceding 6/29 days; today is partial. Custom ranges are capped at 90 days.
+Business dates, first-party visitors and displayed timestamps use Asia/Shanghai (UTC+8). Cloudflare history is the explicit exception: its `day_utc` partitions remain UTC. Presets include today and the preceding 6/29 days; today is partial. Custom ranges are capped at 90 days.
 
 - Visitors: successful browser HTML document requests, first-party HMAC-SHA256(IP + user-agent + Shanghai day), keyed using the existing auth secret with a separate analytics context. No cookie, raw IP, raw UA, path or cross-day identifier is stored. Known bots, admin, APIs, static files and prefetch are excluded. Daily deduplication uses the D1 composite primary key. SPA-only navigations are not additional document visits. Shared IP/UA can undercount; network changes can overcount.
-- `daily_visitors` keeps a rolling 90-day window, cleaned on subsequent visits. Collection starts on the first tracked request after deployment (`analytics_meta.tracking_started_at`); earlier days show unavailable, not zero. Daily totals are summed UV, not cross-day distinct people.
-- Cloudflare historical zone analytics are not imported: the existing Wrangler OAuth grants contain zone read but no Analytics read scope. Do not read OAuth token files to query Analytics. History starts with this implementation.
+- `daily_visitors` keeps a rolling 90-day window, cleaned on subsequent visits. Collection starts on the first tracked request after deployment (`analytics_meta.tracking_started_at`); earlier days use separately labelled Cloudflare history as a reference when present, otherwise unavailable (never invented zero). Daily totals are summed UV, not cross-day distinct people.
+- Cloudflare history is imported separately into `cf_daily_traffic`, using `httpRequests1dGroups` (`uniq.uniques`, `sum.pageViews`, `sum.requests`) from the scoped Analytics:Read API token. The one-time backfill covers 2026-10-29 through 2026-11-11 UTC; the last day is an explicitly partial snapshot. The token was read only from the box environment, was not copied to susu or files, and is not a Worker secret. Wrangler continues using its existing deployment login. No scheduled refresh was added.
 - Signups: `user.created_at`.
 - Created orders: `orders.created_at`, including pending/expired orders. Paid orders and receipts: `orders.paid_at`, USD only; other currencies shown separately.
 - Cash refunded: `payments.amount_refunded`, attributed back to the original order's paid date (not actual refund-event date). Values depend on payment webhook synchronization. This is separate from returned generation credits.
@@ -24,7 +24,7 @@ All dates and displayed times are Asia/Shanghai (UTC+8). Presets include today a
 
 ## Development and production deployment
 
-Work in the approved C-drive checkout, not the old D-drive copy. Run `pnpm install --frozen-lockfile`, site `pnpm typecheck`, `pnpm test`, `pnpm build`, and root `pnpm check:packages`. Site tests use isolated local D1/R2 and the actual migrations.
+Work in the approved C-drive checkout, not the old D-drive copy. Run `pnpm install --frozen-lockfile`, site `pnpm typecheck`, `pnpm test`, `pnpm build`, and root `pnpm check:packages`. Site tests use isolated local D1/R2 and the actual site migrations directly (`vitest.config.ts` reads `migrations/`); there is no separate duplicated test migration tree.
 
 Use the site's installed Wrangler (4.153.0), account `62ffbf61f44b6e2e24c9c0d483181eec`, Worker `faceriff`. Do not use another Cloudflare account/MCP. Preserve the existing production secrets; `.dev.vars` values are not deployed automatically. `ADMIN_EMAILS` was uploaded additively as a Worker secret with the code; later deployments preserve it.
 
@@ -37,3 +37,12 @@ Use the site's installed Wrangler (4.153.0), account `62ffbf61f44b6e2e24c9c0d483
 7. Commit only named source/migration/test/doc files and push `fork main` (`yangkai422-web/shipwords`), never origin/upstream. Leave unrelated e2e text files alone.
 
 Rollback: the previous Worker version metadata is in the ignored deployment backup. Analytics migrations are additive; do not drop customer tables or roll back the live database merely to revert the page.
+## Cloudflare backfill semantics
+
+- The daily reference column prefers `daily_visitors` (including a real zero) and otherwise uses the imported CF unique count. `daily.visitors` in the API remains first-party-only; `cfVisitors`, `cfPageViews` and `cfRequests` are separate fields. KPI totals for each source remain separate and are never added together.
+- The same date string represents different windows: CF UTC 2026-11-10 is Shanghai 2026-11-10 08:00 through 2026-11-11 08:00. Daily zone aggregates cannot be correctly shifted by eight hours into exact Shanghai-day unique counts; no such conversion is attempted. Do not derive order conversion rates from these mismatched windows.
+- CF zone traffic may include crawlers, threats, API calls, static assets, the admin and www hosts. Requests are not people; page views are not unique visitors; summed daily UV is not a cross-day unique population. The first-party launch day is also partial.
+- `cfHistory` reports the imported range, dataset, latest fetch timestamp and partial UTC dates. Missing dates remain null; data outside the saved range is not assumed zero. Partial snapshots remain partial even after the calendar day has ended until a newer import replaces them.
+- Metric SQL is kept in ignored `.wrangler/`, never mixed with schema migrations or committed. Its UPSERT is keyed by `day_utc`; only a same/newer fetch may replace a row, and a complete row cannot be downgraded to a partial snapshot. Imports never modify `daily_visitors` or `analytics_meta`.
+- Apply the additive schema migration with the existing local Wrangler, then `pnpm exec wrangler d1 execute DB --remote --file .wrangler/<data-only-backfill>.sql`. Before/after counts and the previous deployment are backed up in `.wrangler/cf-history-backup-20261111/`. The production Worker only reads D1; dashboard visits do not call the Analytics API.
+- Future refresh is optional. It would need separately provisioning the scoped token as a Worker secret through an approved secure path, plus a small scheduled fetch. This release intentionally does neither; first-party tracking continues normally after the historical backfill.

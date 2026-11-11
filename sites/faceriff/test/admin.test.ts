@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleAdminRequest, isAdmin, renderDashboard } from '../src/lib/admin.server';
-import { dateRange, loadDashboard, maskEmail, shanghaiDay } from '../src/lib/admin-data';
+import { dateRange, loadDashboard, maskEmail, shanghaiDay, visitorReference } from '../src/lib/admin-data';
 import { isVisitorRequest, recordVisitor, visitorHash } from '../src/lib/visitors';
 
 const secret = 'test-only-key-not-a-production-secret-1234';
@@ -49,7 +49,16 @@ async function job(
 }
 
 beforeEach(async () => {
-  for (const t of ['daily_visitors', 'analytics_meta', 'credit_ledger', 'payments', 'orders', 'jobs', 'user'])
+  for (const t of [
+    'cf_daily_traffic',
+    'daily_visitors',
+    'analytics_meta',
+    'credit_ledger',
+    'payments',
+    'orders',
+    'jobs',
+    'user',
+  ])
     await sql(`DELETE FROM ${t}`);
 });
 
@@ -306,5 +315,84 @@ describe('server access and output protection', () => {
       (await handleAdminRequest(req('/api/admin/output?job=../private'), adminEnv, async () => owner))
         ?.status,
     ).toBe(404);
+  });
+});
+
+describe('Cloudflare historical traffic', () => {
+  it('fills historical references, preserves first-party overlap and separates totals', async () => {
+    await recordVisitor(env.DB, secret, browser(), now);
+    await sql(
+      "INSERT INTO cf_daily_traffic(day_utc,uniques,page_views,requests,fetched_at,is_partial) VALUES ('2026-11-10',344,259,1623,?,0),('2026-11-11',153,211,1158,?,1)",
+      now,
+      now,
+    );
+    const d = await loadDashboard(env.DB, range());
+    const old = d.daily.find((r) => r.day === '2026-11-10')!;
+    const overlap = d.daily.find((r) => r.day === '2026-11-11')!;
+    expect(old).toMatchObject({ visitors: null, cfVisitors: 344, cfPageViews: 259, cfRequests: 1623 });
+    expect(visitorReference(old)).toEqual({ value: 344, source: 'cloudflare', timeZone: 'UTC' });
+    expect(overlap).toMatchObject({ visitors: 1, cfVisitors: 153, cfPageViews: 211 });
+    expect(visitorReference(overlap)).toEqual({ value: 1, source: 'first_party', timeZone: 'Asia/Shanghai' });
+    expect(d.totals).toMatchObject({
+      visitors: 1,
+      cfVisitors: 497,
+      cfPageViews: 470,
+      cfRequests: 2781,
+      revenue: 0,
+    });
+    expect(d.cfHistory).toEqual({
+      from: '2026-11-10',
+      to: '2026-11-11',
+      fetchedAt: now,
+      partialDays: ['2026-11-11'],
+      source: 'httpRequests1dGroups',
+    });
+    expect(d.daily.find((r) => r.day === '2026-11-09')).toMatchObject({
+      visitors: null,
+      cfVisitors: null,
+      cfPageViews: null,
+    });
+    const html = renderDashboard(d);
+    expect(html).toContain('Cloudflare 统计（含部分机器人，按 UTC 日）');
+    expect(html).toContain('11 月 10 日 08:00 至 11 月 11 日 08:00');
+    expect(html).toContain('未结束日的截至抓取时快照');
+    expect(html).toContain('仅一次性补录，不会自动刷新');
+    expect(html).not.toContain('所有日期均为北京时间');
+  });
+  it('treats real zero counts as available and never substitutes CF for first-party zero', async () => {
+    await sql("INSERT INTO analytics_meta(key,value) VALUES ('tracking_started_at',?)", now);
+    await sql(
+      "INSERT INTO cf_daily_traffic(day_utc,uniques,page_views,requests,fetched_at,is_partial) VALUES ('2026-11-10',0,0,0,?,0),('2026-11-11',200,300,400,?,1)",
+      now,
+      now,
+    );
+    const d = await loadDashboard(env.DB, range());
+    expect(visitorReference(d.daily.find((r) => r.day === '2026-11-11')!)).toEqual({
+      value: 0,
+      source: 'first_party',
+      timeZone: 'Asia/Shanghai',
+    });
+    expect(visitorReference(d.daily.find((r) => r.day === '2026-11-10')!)).toEqual({
+      value: 0,
+      source: 'cloudflare',
+      timeZone: 'UTC',
+    });
+    expect(d.totals.visitors).toBe(0);
+    expect(d.totals.cfVisitors).toBe(200);
+  });
+  it('loads history independently of whether first-party tracking has started', async () => {
+    await sql(
+      "INSERT INTO cf_daily_traffic(day_utc,uniques,page_views,requests,fetched_at,is_partial) VALUES ('2026-11-10',344,259,1623,?,0)",
+      now,
+    );
+    const d = await loadDashboard(env.DB, range());
+    expect(d.trackingStartedAt).toBeNull();
+    expect(d.totals.visitors).toBeNull();
+    expect(d.totals.cfVisitors).toBe(344);
+    expect(d.totals.cfPageViews).toBe(259);
+    expect(await env.DB.prepare('SELECT count(*) FROM daily_visitors').first('count(*)')).toBe(0);
+    expect((await handleAdminRequest(req('/api/admin/dashboard'), adminEnv, async () => owner))?.status).toBe(
+      200,
+    );
   });
 });

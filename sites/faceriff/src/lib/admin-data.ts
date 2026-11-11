@@ -28,6 +28,9 @@ export type DateRange = ReturnType<typeof dateRange>;
 export interface DailyRow {
   day: string;
   visitors: number | null;
+  cfVisitors: number | null;
+  cfPageViews: number | null;
+  cfRequests: number | null;
   signups: number;
   orders: number;
   paidOrders: number;
@@ -45,6 +48,22 @@ export interface DailyRow {
   knownCostJobs: number;
   estimatedCostJobs: number;
   margin: number;
+}
+// Reference column prefers first-party data even when its valid count is zero.
+// Keep the two source totals separate: UTC zone uniques are not Shanghai browser uniques.
+export function visitorReference(row: Pick<DailyRow, 'visitors' | 'cfVisitors'>) {
+  if (row.visitors != null)
+    return { value: row.visitors, source: 'first_party' as const, timeZone: 'Asia/Shanghai' as const };
+  if (row.cfVisitors != null)
+    return { value: row.cfVisitors, source: 'cloudflare' as const, timeZone: 'UTC' as const };
+  return { value: null, source: 'unavailable' as const, timeZone: null };
+}
+export interface CloudflareHistory {
+  from: string;
+  to: string;
+  fetchedAt: number;
+  partialDays: string[];
+  source: 'httpRequests1dGroups';
 }
 export interface RecentOrder {
   id: string;
@@ -84,6 +103,7 @@ export interface HeldAccount {
 export interface Dashboard {
   range: DateRange;
   trackingStartedAt: number | null;
+  cfHistory: CloudflareHistory | null;
   daily: DailyRow[];
   totals: Omit<DailyRow, 'day'>;
   orders: RecentOrder[];
@@ -181,6 +201,14 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       range.start,
       range.end,
     ),
+    q(
+      'SELECT day_utc day,uniques cfVisitors,page_views cfPageViews,requests cfRequests FROM cf_daily_traffic WHERE day_utc BETWEEN ? AND ? ORDER BY day_utc',
+      range.from,
+      range.to,
+    ),
+    q(
+      'SELECT min(day_utc) fromDay,max(day_utc) toDay,max(fetched_at) fetchedAt,group_concat(CASE WHEN is_partial=1 THEN day_utc END) partialDays FROM cf_daily_traffic',
+    ),
   ]);
   const rows = (index: number) => result[index]?.results ?? [];
   const started = rows(0)[0]?.value;
@@ -196,6 +224,9 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
         day >= shanghaiDay(Date.now() - 90 * DAY)
           ? 0
           : null,
+      cfVisitors: null,
+      cfPageViews: null,
+      cfRequests: null,
       signups: 0,
       orders: 0,
       paidOrders: 0,
@@ -221,18 +252,36 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       const row = byDay.get(String(values.day));
       if (row) Object.assign(row, values);
     }
+  for (const values of rows(10)) {
+    const row = byDay.get(String(values.day));
+    if (row) Object.assign(row, values);
+  }
+  const cfMeta = rows(11)[0];
+  const cfHistory: CloudflareHistory | null =
+    typeof cfMeta?.fromDay === 'string' &&
+    typeof cfMeta.toDay === 'string' &&
+    typeof cfMeta.fetchedAt === 'number'
+      ? {
+          from: cfMeta.fromDay,
+          to: cfMeta.toDay,
+          fetchedAt: cfMeta.fetchedAt,
+          partialDays: typeof cfMeta.partialDays === 'string' ? cfMeta.partialDays.split(',') : [],
+          source: 'httpRequests1dGroups',
+        }
+      : null;
   for (const row of daily) row.margin = row.revenue - row.cashRefund - row.yirCost;
   const { day: _day, ...totals } = daily[0]!;
   for (const key of Object.keys(totals) as (keyof typeof totals)[]) {
-    if (key === 'visitors')
-      totals.visitors = daily.every((d) => d.visitors == null)
+    if (key === 'visitors' || key === 'cfVisitors' || key === 'cfPageViews' || key === 'cfRequests')
+      totals[key] = daily.every((d) => d[key] == null)
         ? null
-        : daily.reduce((sum, d) => sum + (d.visitors ?? 0), 0);
+        : daily.reduce((sum, d) => sum + (d[key] ?? 0), 0);
     else totals[key] = daily.reduce((sum, d) => sum + d[key], 0);
   }
   return {
     range,
     trackingStartedAt,
+    cfHistory,
     daily: daily.reverse(),
     totals,
     orders: (rows(6) as unknown as RecentOrder[]).map((o) => ({ ...o, email: maskEmail(o.email) })),
