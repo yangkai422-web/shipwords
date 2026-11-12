@@ -1,6 +1,10 @@
 // Owner dashboard: realtime visitors and plain-SVG charts (no chart library, no external requests).
 import { type Charts, HOUR, type Realtime } from './realtime';
 
+/** Auto-refresh of the admin live/realtime blocks; a manual page reload is always fresh (no-store). */
+export const AUTO_REFRESH_MS = 2 * 60 * 60_000;
+export const AUTO_REFRESH_TEXT = '每 2 小时自动刷新 · 手动刷新页面立即更新';
+
 const esc = (s: unknown) =>
   String(s ?? '').replace(
     /[&<>"']/g,
@@ -196,7 +200,7 @@ const rowsHtml = (items: (string | number)[][], cols: number) =>
 
 export function renderRealtime(r: Realtime, label: Label, nonce: string): string {
   const j = realtimeJson(r, label);
-  return `<section id="realtime"><h2>实时访客 <span class="live">● 每 30 秒自动刷新</span></h2>
+  return `<section id="realtime"><h2>实时访客 <span class="live">● ${AUTO_REFRESH_TEXT}</span></h2>
   <p class="muted">最后更新：<strong id="rt-updated">${esc(j.updated)}</strong>（北京时间）<span id="rt-status" class="warn"></span> · 实时数据开始于 ${r.startedAt ? esc(clock(r.startedAt)) : '尚无访问（部署后第一次访问开始）'}</p>
   <div class="cards rt"><section class="card"><div>在线（5 分钟内）</div><div class="value" id="rt-online5">${j.online5}</div><small>按当日哈希访客去重</small></section>
   <section class="card"><div>在线（30 分钟内）</div><div class="value" id="rt-online30">${j.online30}</div><small>排除机器人、/admin、/api</small></section>
@@ -221,11 +225,11 @@ export function renderRealtime(r: Realtime, label: Label, nonce: string): string
 const REFRESH_SCRIPT = `(()=>{const $=(i)=>document.getElementById(i);
 const fill=(id,items,cols)=>{const tb=$(id);tb.replaceChildren();if(!items.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=cols.length;td.textContent='最近 30 分钟暂无访客';tr.append(td);tb.append(tr);return}for(const it of items){const tr=document.createElement('tr');for(const c of cols){const td=document.createElement('td');td.textContent=String(it[c]);tr.append(td)}tb.append(tr)}};
 const spark=(s)=>{const g=$('rt-spark'),max=Math.max(1,...s),ns='http://www.w3.org/2000/svg';g.replaceChildren();s.forEach((v,i)=>{const r=document.createElementNS(ns,'rect'),h=36*v/max;r.setAttribute('x',String(i*4));r.setAttribute('y',String(38-h));r.setAttribute('width','3');r.setAttribute('height',String(h));const t=document.createElementNS(ns,'title');t.textContent=String(v);r.append(t);g.append(r)})};
-let busy=false;const tick=async()=>{if(busy)return;busy=true;try{const r=await fetch('/api/admin/realtime',{cache:'no-store',credentials:'same-origin',headers:{accept:'application/json'}});if(!r.ok)throw new Error(String(r.status));const d=await r.json();
+let busy=false,last=Date.now();const tick=async()=>{if(busy)return;busy=true;last=Date.now();try{const r=await fetch('/api/admin/realtime',{cache:'no-store',credentials:'same-origin',headers:{accept:'application/json'}});if(!r.ok)throw new Error(String(r.status));const d=await r.json();
 $('rt-online5').textContent=d.online5;$('rt-online30').textContent=d.online30;$('rt-pm').textContent=d.perMinute;$('rt-views30').textContent=d.views30;$('rt-updated').textContent=d.updated;
 fill('rt-pages',d.pages,['label','active5','visitors','views']);fill('rt-countries',d.countries,['label','visitors']);fill('rt-devices',d.devices,['label','visitors']);spark(d.series);$('rt-status').textContent=''}
 catch(e){$('rt-status').textContent=' · 刷新失败（'+(e&&e.message==='404'?'登录可能已过期，请刷新页面':'稍后自动重试')+'）'}finally{busy=false}};
-addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.sv').forEach((e)=>{e.scrollLeft=e.scrollWidth}));setInterval(()=>{if(!document.hidden)tick()},30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});})();`;
+addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.sv').forEach((e)=>{e.scrollLeft=e.scrollWidth}));const due=()=>Date.now()-last>=${AUTO_REFRESH_MS};setInterval(()=>{if(!document.hidden&&due())tick()},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden&&due())tick()});})();`;
 
 export function renderCharts(c: Charts, label: Label): string {
   const hourLabels = c.hourly.map((h) => `${String((h.hour + 8) % 24).padStart(2, '0')}时`);

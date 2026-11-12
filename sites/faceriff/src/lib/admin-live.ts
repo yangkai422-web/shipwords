@@ -1,6 +1,6 @@
 // Owner dashboard top: recent orders and jobs (auto-refreshed), today's summary, compact KPIs incl. Yir balance.
 import site from '../../site.config';
-import { clock } from './admin-charts';
+import { AUTO_REFRESH_MS, AUTO_REFRESH_TEXT, clock } from './admin-charts';
 import { DAY, shanghaiDay } from './admin-data';
 import { MINUTE } from './realtime';
 import type { YirBalanceView } from './yir-balance';
@@ -191,7 +191,7 @@ const head = (cols: string[]) => `<thead><tr>${cols.map((c) => `<th>${esc(c)}</t
 export function renderLive(j: LiveJson, nonce: string): string {
   return `<section id="live">
   <div class="warnbox" id="yir-warn"${j.yir.warn ? '' : ' hidden'}>${esc(j.yir.warn)}</div>
-  <div class="summary"><strong id="live-summary">${esc(j.summary)}</strong><span class="muted"> · 每 30 秒自动刷新 · 最后更新 <span id="live-updated">${esc(j.updated)}</span>（北京时间）<span id="live-status" class="warn"></span></span></div>
+  <div class="summary"><strong id="live-summary">${esc(j.summary)}</strong><span class="muted"> · ${AUTO_REFRESH_TEXT} · 最后更新 <span id="live-updated">${esc(j.updated)}</span>（北京时间）<span id="live-status" class="warn"></span></span></div>
   <h2>最近订单</h2><div class="scroll"><table>${head(['时间', '邮箱', '套餐', '金额', '状态'])}<tbody id="live-orders">${rows(j.orders, 5, '暂无订单')}</tbody></table></div>
   <h2>最近生成任务</h2><div class="scroll"><table>${head(['时间', '邮箱', '模板', '状态', '错误码', 'Yir 成本'])}<tbody id="live-jobs">${rows(j.jobs, 6, '暂无任务')}</tbody></table></div>
   <div class="cards kpi"><section class="card"><div>在线（5 分钟内）</div><div class="value" id="k-online5">${j.online5}</div><small>排除机器人、后台、API</small></section>
@@ -204,11 +204,11 @@ const LIVE_SCRIPT = `(()=>{const $=(i)=>document.getElementById(i);
 const cells=(id,list,cols,empty)=>{const tb=$(id);tb.replaceChildren();if(!list.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=cols;td.textContent=empty;tr.append(td);tb.append(tr);return}
 for(const r of list){const tr=document.createElement('tr');for(const c of r){const td=document.createElement('td');let el=td;if(c.c){const s=document.createElement('span');s.className='badge '+c.c;td.append(s);el=s}
 if(c.href&&c.href.startsWith('/admin/')){const a=document.createElement('a');a.href=c.href;a.textContent=c.t;el.append(a)}else el.append(document.createTextNode(c.t));tr.append(td)}tb.append(tr)}};
-let busy=false;const tick=async()=>{if(busy)return;busy=true;try{const r=await fetch('/api/admin/live',{cache:'no-store',credentials:'same-origin',headers:{accept:'application/json'}});if(!r.ok)throw new Error(String(r.status));const d=await r.json();
+let busy=false,last=Date.now();const tick=async()=>{if(busy)return;busy=true;last=Date.now();try{const r=await fetch('/api/admin/live',{cache:'no-store',credentials:'same-origin',headers:{accept:'application/json'}});if(!r.ok)throw new Error(String(r.status));const d=await r.json();
 $('live-summary').textContent=d.summary;$('live-updated').textContent=d.updated;cells('live-orders',d.orders,5,'暂无订单');cells('live-jobs',d.jobs,6,'暂无任务');
 $('k-online5').textContent=d.online5;$('k-uv').textContent=d.todayUv;$('k-yir').textContent=d.yir.value;$('k-yir-note').textContent=d.yir.note;$('k-yir-card').classList.toggle('lowcard',!!d.yir.low);
 const w=$('yir-warn');w.textContent=d.yir.warn;w.hidden=!d.yir.warn;const b=$('review-count');if(b){b.textContent=d.pendingReviews;b.className='badge '+(d.pendingReviews>0?'bad':'good')}$('live-status').textContent=''}
 catch(e){$('live-status').textContent=' · 刷新失败（'+(e&&e.message==='404'?'登录可能已过期，请刷新页面':'稍后自动重试')+'）'}finally{busy=false}};
-setInterval(()=>{if(!document.hidden)tick()},30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});})();`;
+const due=()=>Date.now()-last>=${AUTO_REFRESH_MS};setInterval(()=>{if(!document.hidden&&due())tick()},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden&&due())tick()});})();`;
 
 export const LIVE_CSS = `.summary{background:#151b33;border:1px solid #eef0ff1f;border-radius:12px;padding:12px 16px;margin:16px 0}.warnbox{background:#4c2435;border:1px solid #ff4d6d;color:#ffd6de;border-radius:12px;padding:12px 16px;margin:16px 0;font-weight:600}.cards.kpi{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:18px}.lowcard{border-color:#ff4d6d;background:#2a1626}.lowcard .value{color:#ff9aaf}details.sec{background:#10162a;border:1px solid #eef0ff1f;border-radius:12px;padding:0 16px;margin:12px 0}details.sec>summary{cursor:pointer;padding:14px 0;font-size:17px;font-weight:600}details.sec[open]>summary{border-bottom:1px solid #eef0ff16;margin-bottom:8px}@media(max-width:700px){.cards.kpi{grid-template-columns:1fr}}`;
