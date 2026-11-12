@@ -425,6 +425,8 @@ describe('privacy-safe first-visit dimensions', () => {
       browser: 'Chrome',
       referrer: 'google',
       utm_source: 'newsletter',
+      language: 'unknown',
+      lang_base: 'unknown',
     });
     expect(visitorDimensions(dimensionRequest('/', 'https://x.com/private/path?secret=a')).referrer).toBe(
       'x',
@@ -494,7 +496,7 @@ describe('privacy-safe first-visit dimensions', () => {
     const counts = await env.DB.prepare(
       'SELECT dimension,value,count FROM daily_visitor_dimensions ORDER BY dimension',
     ).all();
-    expect(counts.results).toHaveLength(6);
+    expect(counts.results).toHaveLength(8);
     expect(counts.results.every((r) => r.count === 1)).toBe(true);
     expect(counts.results.find((r) => r.dimension === 'referrer')?.value).toBe('google');
     expect(counts.results.find((r) => r.dimension === 'utm_source')?.value).toBe('newsletter');
@@ -510,7 +512,7 @@ describe('privacy-safe first-visit dimensions', () => {
     await recordVisitor(env.DB, secret, r, now);
     expect(await env.DB.prepare('SELECT count(*) n FROM daily_visitor_dimensions').first('n')).toBe(0);
     await recordVisitor(env.DB, secret, r, now + 86400000);
-    expect(await env.DB.prepare('SELECT sum(count) n FROM daily_visitor_dimensions').first('n')).toBe(6);
+    expect(await env.DB.prepare('SELECT sum(count) n FROM daily_visitor_dimensions').first('n')).toBe(8);
   });
   it('retains only 90 days of marginal counts', async () => {
     await sql(

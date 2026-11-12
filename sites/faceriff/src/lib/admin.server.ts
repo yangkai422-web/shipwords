@@ -2,6 +2,7 @@ import { isAllowlistedEmail } from './admin-access';
 import { CHART_CSS, realtimeJson, renderCharts, renderRealtime } from './admin-charts';
 import { type Dashboard, dateRange, loadDashboard, visitorReference } from './admin-data';
 import type { DimensionCount, TrafficDimensions } from './admin-dimensions';
+import { type GeoData, languageLabel, loadGeo, renderGeo } from './admin-geo';
 import { handleReviewRequest } from './admin-review';
 import { type Charts, loadCharts, loadRealtime, type Realtime } from './realtime';
 import { dimensionNames } from './visitor-dimensions';
@@ -69,6 +70,7 @@ const table = (heads: string[], body: string) =>
 
 const countries = new Intl.DisplayNames(['zh-CN'], { type: 'region' });
 export const dimensionLabel = (dimension: string, value: string) => {
+  if (dimension === 'language' || dimension === 'lang_base') return languageLabel(value);
   if (dimension === 'utm_source')
     return value === '__none__' ? '未设置' : value === '__redacted__' ? '已过滤（非安全标签）' : value;
   if (dimension === 'country') {
@@ -167,6 +169,7 @@ function renderDimensions(d: TrafficDimensions): string {
 export interface LiveSections {
   realtime: Realtime;
   charts: Charts;
+  geo?: GeoData;
   nonce: string;
 }
 export function renderDashboard(data: Dashboard, live?: LiveSections): string {
@@ -204,7 +207,7 @@ export function renderDashboard(data: Dashboard, live?: LiveSections): string {
   *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef0ff;font:14px/1.65 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px 24px}a{color:#ff839a}h1{font-size:30px;margin:0}h2{font-size:20px;margin:30px 0 10px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.tag{color:#c6f432;font-size:12px;letter-spacing:2px}p,.muted{color:#aeb5d4}.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0}input,button,.pill{background:#151b33;border:1px solid #eef0ff30;color:#eef0ff;border-radius:8px;padding:9px 12px}button{background:#ff4d6d;color:#fff;cursor:pointer}.pill{text-decoration:none}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:#151b33;border:1px solid #eef0ff1f;border-radius:14px;padding:18px}.value{font:700 30px/1.4 ui-monospace,monospace;margin:6px 0}.card small{color:#aeb5d4}.notice{border-left:3px solid #c6f432;background:#151b33;padding:12px 16px;margin:18px 0}.scroll{overflow:auto;border:1px solid #eef0ff22;border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;background:#10162a}th,td{padding:12px;text-align:left;border-bottom:1px solid #eef0ff16;font-variant-numeric:tabular-nums}th{color:#c9cde8;background:#151b33;position:sticky;top:0}tbody tr:hover{background:#151b33}.badge{padding:3px 8px;border-radius:6px;background:#3b3450;color:#ffe5a1}.good{background:#263c2c;color:#c6f432}.bad{background:#4c2435;color:#ff9aaf}details{background:#151b33;padding:16px;border-radius:12px;margin-top:20px}li{margin:7px 0}footer{margin:28px 0;color:#8f95b8}@media(max-width:900px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:20px 12px}}@media(max-width:480px){.cards{grid-template-columns:1fr}.top{display:block}}${CHART_CSS}
   </style></head><body><main><header class="top"><div><div class="tag">FACERIFF · OWNER ONLY</div><h1>经营与交付后台</h1><div class="muted">只读 · Asia/Shanghai (UTC+8) · ${escapeHtml(time(Date.now()))}</div></div><nav class="filters"><a class="pill review-link" href="/admin/review">待审核任务 <span class="badge ${data.pendingReviews > 0 ? 'bad' : 'good'}">${data.pendingReviews}</span></a><a href="/">返回网站</a></nav></header>
   ${data.pendingReviews > 0 ? `<div class="notice">有 <strong>${data.pendingReviews}</strong> 个视频等待人工审核（客户积分已扣、尚未交付）。<a href="/admin/review">去审核</a></div>` : ''}
-  ${live ? renderRealtime(live.realtime, dimensionLabel, live.nonce) + renderCharts(live.charts, dimensionLabel) : ''}
+  ${live ? renderRealtime(live.realtime, dimensionLabel, live.nonce) + renderCharts(live.charts, dimensionLabel) + (live.geo ? renderGeo(live.geo, (c) => dimensionLabel('country', c)) : '') : ''}
   <h2>经营明细</h2>
   <form class="filters" method="get" action="/admin"><a class="pill" href="/admin?days=7">最近 7 天</a><a class="pill" href="/admin?days=30">最近 30 天</a><label>从 <input type="date" name="from" value="${r.from}" required></label><label>到 <input type="date" name="to" value="${r.to}" required></label><button type="submit">查看</button><span class="muted">最多 90 天 · 今天尚未结束</span></form>
   <div class="cards">${kpis.map(([label, value, note]) => `<section class="card"><div>${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div><small>${escapeHtml(note)}</small></section>`).join('')}</div>
@@ -318,9 +321,13 @@ export async function handleAdminRequest(
         headers: { ...secureHeaders, 'content-type': 'application/json; charset=utf-8' },
       });
     if (request.method === 'HEAD') return html('');
-    const [realtime, charts] = await Promise.all([loadRealtime(env.DB), loadCharts(env.DB)]);
+    const [realtime, charts, geo] = await Promise.all([
+      loadRealtime(env.DB),
+      loadCharts(env.DB),
+      loadGeo(env.DB),
+    ]);
     const nonce = newNonce();
-    return html(renderDashboard(data, { realtime, charts, nonce }), 200, {
+    return html(renderDashboard(data, { realtime, charts, geo, nonce }), 200, {
       'content-security-policy': dashboardCsp(nonce),
     });
   } catch (error) {

@@ -1,3 +1,5 @@
+import { browserLanguage } from './geo';
+
 export const dimensionNames = {
   country: '国家 / 地区',
   device: '设备类型',
@@ -5,6 +7,8 @@ export const dimensionNames = {
   browser: '浏览器',
   referrer: '来源平台（Referer）',
   utm_source: 'UTM 来源（utm_source）',
+  language: '浏览器语言（Accept-Language 首选）',
+  lang_base: '浏览器基础语言',
 } as const;
 export type VisitorDimension = keyof typeof dimensionNames;
 
@@ -99,6 +103,7 @@ export function visitorDimensions(request: Request): Record<VisitorDimension, st
   }
   const tag = new URL(request.url).searchParams.get('utm_source')?.trim().toLowerCase();
   // Campaign labels only; reject URLs, emails, IPs, paths and excessively long values.
+  const lang = browserLanguage(request.headers.get('accept-language'));
   const utm_source = !tag ? '__none__' : /^[a-z][a-z0-9_-]{0,39}$/.test(tag) ? tag : '__redacted__';
   return {
     country: typeof country === 'string' && /^[A-Z]{2}$/.test(country) ? country : 'ZZ',
@@ -107,5 +112,7 @@ export function visitorDimensions(request: Request): Record<VisitorDimension, st
     browser,
     referrer,
     utm_source,
+    language: lang.language,
+    lang_base: lang.base,
   };
 }
