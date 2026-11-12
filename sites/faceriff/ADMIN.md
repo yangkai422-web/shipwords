@@ -69,3 +69,13 @@ Rollback: the previous Worker version metadata is in the ignored deployment back
 - This is an additional entry gate, not a separate identity system or MFA factor. Customer login is deliberately unchanged and may still send a code to the owner. Either valid session must pass ADMIN_EMAILS and verified-email checks at /admin and admin APIs. Login send/verify are intentionally separate public auth forms, not protected data APIs.
 - Anonymous dashboard GET/HEAD redirects 302 only for /admin and /admin/; other unknown admin URLs stay 404, signed-in non-admins stay 404, and data/output APIs never redirect to login. An unauthenticated /admin Not found in older releases was intentional, not a broken account.
 - Validation uses mocked auth/delivery handlers for allowed send and cookie propagation; no real owner OTP is sent and no owner session is minted during deployment. Production denial checks use reserved example.invalid emails and confirm no matching verification records were created.
+
+## Paid-failure hold (unblocking a customer)
+
+- Trigger `jobs_quality_retry_guard` (migration `20261112090000_paid_failure_guard.sql`) and `qualityRetryHold` in `packages/jobs/src/lifecycle.ts` block a new paid job for the same user and model while that user has a `failed` job with `error_code` `swap_not_applied`/`swap_not_applied_v2`, or a job Yir already accepted (`upstream_job_id` set) that failed with `internal_error`, `stale`, `timeout` or `check_failed`. The customer sees HTTP 409 `quality_review_required`; credits were refunded once and are safe.
+- Why: after Yir accepts a task we are charged (~$2.74) even when our store/compose/check fails, so a refunded self-retry could burn upstream spend repeatedly.
+- The raw Yir output is usually still in R2 at `jobs/<job_id>/0.mp4` (not served to the customer while the job is failed). Deliver it manually or re-compose it rather than regenerating.
+- To unblock after review, rename the error code to `*_reviewed` (one job at a time):
+  `pnpm exec wrangler d1 execute faceriff --remote --command "UPDATE jobs SET error_code = error_code || '_reviewed' WHERE id = 'job_ID' AND status = 'failed';"`
+  Back up the row first; verify `changes = 1`.
+- Cancel: `/api/jobs/<id>/cancel` now returns 409 `not_cancellable` once the job is submitted to Yir (no UI button uses it); only queued jobs can be canceled and refunded.

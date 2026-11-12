@@ -264,6 +264,9 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
     async cancel(request: Request, jobId: string): Promise<Response> {
       const job = await ownedJob(request, jobId);
       if (!job) return errorResponse(404, 'job_not_found');
+      // Once Yir has the task we pay for it even if canceled; a refunded cancel would let one user burn upstream spend in a loop.
+      if (job.status === 'submitted' || job.upstreamJobId)
+        return errorResponse(409, 'not_cancellable', 'This video is already rendering and can no longer be canceled.');
       const updated = await markFailed(core.db, jobId, 'canceled', 'canceled', 'canceled by user');
       if (updated?.status === 'canceled') {
         await env()

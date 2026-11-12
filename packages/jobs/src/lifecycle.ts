@@ -2,7 +2,7 @@ import { refundSpend } from '@shipwords/core/credits/ledger';
 import type { BatchItem, Db } from '@shipwords/core/db/client';
 import { quotaCounters } from '@shipwords/core/db/schema';
 import type { QuotaRule } from '@shipwords/core/quota/counters';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { type JobRow, jobs } from './schema';
 
 // Every write to job state goes through here. Each state change is a conditional UPDATE;
@@ -20,6 +20,9 @@ export async function markQualityReview(db: Db, jobId: string, message: string):
     .where(and(eq(jobs.id, jobId), inArray(jobs.status, ACTIVE)));
 }
 
+/** Failures after the upstream task was placed: we likely paid Yir, so a refunded retry needs support. */
+export const PAID_FAILURE_CODES = ['internal_error', 'stale', 'timeout', 'check_failed'];
+
 /** A failed paid quality check remains on hold until a human clears that job. */
 export async function qualityRetryHold(db: Db, userId: string, modelId: string): Promise<string | null> {
   const [row] = await db
@@ -29,7 +32,11 @@ export async function qualityRetryHold(db: Db, userId: string, modelId: string):
       eq(jobs.userId, userId),
       eq(jobs.modelId, modelId),
       eq(jobs.status, 'failed'),
-      inArray(jobs.errorCode, ['swap_not_applied', 'swap_not_applied_v2']),
+      or(
+        inArray(jobs.errorCode, ['swap_not_applied', 'swap_not_applied_v2']),
+        // Yir was already asked to render, then we failed: refunded once, no free self-retry (keep in sync with the D1 trigger).
+        and(isNotNull(jobs.upstreamJobId), inArray(jobs.errorCode, PAID_FAILURE_CODES)),
+      ),
     ))
     .limit(1);
   return row?.id ?? null;
