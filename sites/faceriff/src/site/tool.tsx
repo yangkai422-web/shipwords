@@ -856,6 +856,7 @@ function JobCard({
           Your video is ready, but some faces may need checking. Please preview it and contact support if the swap is not right.
         </p>
       )}
+      {job.status === 'needs_review' && <p className="notice job-review-text">{m.common_job_review()}</p>}
       {job.status === 'failed' && <p className="error job-failed-text">{m.common_job_failed()}</p>}
       {job.status === 'canceled' && <p className="muted">{m.common_job_canceled()}</p>}
     </article>

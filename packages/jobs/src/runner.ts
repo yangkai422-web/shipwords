@@ -1,9 +1,10 @@
 import type { Db } from '@shipwords/core/db/client';
-import type { Composer, ComposeSegment } from './compose';
+import type { Composer, ComposeSegment, FaceCheckResult } from './compose';
 import {
   appendUpstreamJob,
   loadJob,
   markFailed,
+  markNeedsReview,
   markQualityReview,
   markSucceeded,
   recordUpstreamCost,
@@ -250,6 +251,8 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
       parts,
       prep: partsOf(job, model).filter((part) => part.kind === 'image' && model.kind === 'video').length,
       compose: Boolean(model.effect?.compose),
+      // Cached loads from older versions lack this, so jobs in flight across the deploy keep the automatic behaviour.
+      manualReview: Boolean(model.manualReview),
       // Output checks: segment ID → config. Cached loads from older versions lack this, so old in-flight jobs keep running unchecked.
       checks: Object.fromEntries(
         (model.effect?.segments ?? [])
@@ -316,6 +319,8 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
   const outputs: StoredOutput[] = [];
   /** Key of each segment's first output, looked up by segment ID when composing. */
   const partKeys = new Map<string, string>();
+  /** manualReview: why each segment needs a human look; rebuilt identically on replay from the cached check steps. */
+  const reviewNotes: ReviewNote[] = [];
   const timeOut = () =>
     step.do('timeout', async () => {
       const job = await loadJob(deps.db, jobId);
@@ -468,18 +473,47 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
           .map((slot) => faces[slot])
           .filter((point): point is FacePoint => Boolean(point));
         if (!deps.composer || points.length === 0) return { scores: [] as number[] };
+        // Slot names in point order, so a reviewer can tell which role each score belongs to.
+        const slots = (partsOf(job, model)[index]!.slots ?? []).filter((slot) => Boolean(faces[slot]));
         const t = Date.now();
         const checked = await deps.composer.faces({
           jobId, key, originalKey: original, points, seconds: check.seconds,
         });
         deps.log?.('timing', { jobId, stage: 'face_check', part: partId, ms: Date.now() - t });
-        return Array.isArray(checked) ? { scores: checked } : { scores: checked.similarity, quality: checked };
+        return Array.isArray(checked)
+          ? { scores: checked, slots }
+          : { scores: checked.similarity, quality: checked, slots };
       })
       .catch((error: unknown) => {
         deps.log?.('swap check errored', { jobId, part: partId, error: String(error) });
         return { errored: String(error) };
       });
     if ('stopped' in verdict) return false;
+    if (setup.manualReview) {
+      // Never refund or auto-deliver a rendered job that isn't a clear pass: hold it for a human (see markNeedsReview below).
+      const base = { part: partId, threshold: check.maxSimilarity };
+      if ('errored' in verdict) {
+        reviewNotes.push({ ...base, reason: 'check_error', error: verdict.errored.slice(0, 300) });
+        return true;
+      }
+      const slots = 'slots' in verdict ? verdict.slots : undefined;
+      if ('quality' in verdict && verdict.quality) {
+        deps.log?.('quality check v2', { jobId, part: partId, ...verdict.quality });
+        if (verdict.quality.verdict !== 'pass')
+          reviewNotes.push({
+            ...base,
+            reason: verdict.quality.verdict === 'fail' ? 'swap_fail' : 'grey',
+            scores: verdict.scores,
+            quality: verdict.quality,
+            ...(slots ? { slots } : {}),
+          });
+        return true;
+      }
+      const worst = Math.max(0, ...verdict.scores);
+      if (worst >= check.maxSimilarity)
+        reviewNotes.push({ ...base, reason: 'swap_fail', scores: verdict.scores, ...(slots ? { slots } : {}) });
+      return true;
+    }
     if ('errored' in verdict) {
       if (rolePolicy) {
         await review(`${partId}: automatic quality check was unavailable; preview the video and contact support if needed.`);
@@ -644,21 +678,86 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
     }
   }
   let finalOutputs = outputs;
+  const composeFailure: { error: string | null } = { error: null };
   if (setup.compose) {
     // Compose failures throw: once Workflow retries run out the fallback fails the job with a full refund. Retries write the same keys, so it's idempotent.
-      const composed = await step.do('compose', async () => {
+    // With manualReview the model output already cost money, so a compose failure holds the job for review with the raw output instead.
+    const composeStep = step.do('compose', async () => {
       const t = Date.now();
       const result = await composeOutputs(deps, jobId, partKeys, outputs.length);
       deps.log?.('timing', { jobId, stage: 'compose', ms: Date.now() - t });
       return result;
     });
-    if (!composed) return;
-    finalOutputs = composed;
+    const composed = setup.manualReview
+      ? await composeStep.catch((error: unknown) => {
+          composeFailure.error = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+          deps.log?.('compose failed, holding for review', { jobId, error: composeFailure.error });
+          return undefined;
+        })
+      : await composeStep;
+    if (composed === null) return;
+    if (composed) finalOutputs = composed;
+  }
+  if (setup.manualReview && (reviewNotes.length > 0 || composeFailure.error !== null)) {
+    const code = reviewCode(reviewNotes, composeFailure.error !== null);
+    const review: ReviewInfo = {
+      version: 1,
+      notes: reviewNotes,
+      composeError: composeFailure.error,
+      rawKey: outputs[0]?.key ?? null,
+      composed: composeFailure.error === null && setup.compose === true,
+    };
+    await step.do('needs-review', async () => {
+      await markNeedsReview(deps.db, jobId, finalOutputs, code, reviewMessage(code), review);
+      return true;
+    });
+    return;
   }
   await step.do('finish', async () => {
     await markSucceeded(deps.db, jobId, finalOutputs);
     return true;
   });
+}
+
+export interface ReviewNote {
+  part: string;
+  reason: 'swap_fail' | 'grey' | 'check_error';
+  /** Similarity threshold of this segment's check (at or above = original face still there). */
+  threshold: number;
+  /** Per checked slot, same order as slots. */
+  scores?: number[];
+  slots?: string[];
+  quality?: FaceCheckResult;
+  error?: string;
+}
+
+export interface ReviewInfo {
+  version: 1;
+  notes: ReviewNote[];
+  composeError: string | null;
+  /** First raw model output in R2 (jobs/<id>/0.mp4), kept for preview and manual delivery. */
+  rawKey: string | null;
+  /** Whether outputs_json holds the composed final video (false: it holds the raw model output). */
+  composed: boolean;
+}
+
+/** error_code of a held job, most serious first. Rejecting appends _reviewed, which no retry guard matches. */
+export function reviewCode(notes: readonly ReviewNote[], composeFailed: boolean): string {
+  if (notes.some((n) => n.reason === 'swap_fail')) return 'review_swap_fail';
+  if (notes.some((n) => n.reason === 'grey')) return 'review_grey';
+  if (notes.some((n) => n.reason === 'check_error')) return 'review_check_error';
+  return composeFailed ? 'review_compose_failed' : 'review_grey';
+}
+
+function reviewMessage(code: string): string {
+  return (
+    {
+      review_swap_fail: 'Face check: an original face may remain; held for manual review.',
+      review_grey: 'Face check was not a clear pass; held for manual review.',
+      review_check_error: 'Face check could not run; held for manual review.',
+      review_compose_failed: 'Compose failed after the model rendered; raw output held for manual review.',
+    } as Record<string, string>
+  )[code] ?? 'Held for manual review.';
 }
 
 /** Stitch the output in effect segment order: rendered segments use model outputs, the rest use base clips. Stored as a with-track and a silent file. */

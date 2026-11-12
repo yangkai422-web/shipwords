@@ -42,15 +42,34 @@ export async function qualityRetryHold(db: Db, userId: string, modelId: string):
   return row?.id ?? null;
 }
 
+/** A job of this user and model waiting for a manual review: until it is decided, no new paid job of that model (temporary, not a permanent hold). */
+export async function reviewPending(db: Db, userId: string, modelId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.userId, userId), eq(jobs.modelId, modelId), eq(jobs.status, 'needs_review')))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 /** Drizzle/D1 may put the trigger message in an Error.cause chain. */
-export function isQualityRetryHoldError(error: unknown): boolean {
+function hasTriggerMessage(error: unknown, text: string): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
     const item = current as { message?: unknown; cause?: unknown };
-    if (typeof item.message === 'string' && item.message.includes('quality_review_required')) return true;
+    if (typeof item.message === 'string' && item.message.includes(text)) return true;
     current = item.cause;
   }
   return false;
+}
+
+export function isQualityRetryHoldError(error: unknown): boolean {
+  return hasTriggerMessage(error, 'quality_review_required');
+}
+
+/** Raised by the jobs_review_pending_guard trigger. */
+export function isReviewPendingError(error: unknown): boolean {
+  return hasTriggerMessage(error, 'review_pending');
 }
 
 export async function loadJob(db: Db, jobId: string): Promise<JobRow | null> {
@@ -113,6 +132,56 @@ export async function markSucceeded(db: Db, jobId: string, outputs: StoredOutput
     .where(and(eq(jobs.id, jobId), inArray(jobs.status, ACTIVE)))
     .run();
   return result.meta.changes > 0;
+}
+
+/**
+ * Hold a rendered job for a manual decision instead of delivering or refunding it: credits stay spent, outputs are stored but not served
+ * (files are only served for succeeded jobs). Only from an in-progress state, so a canceled or already-finished job is never revived.
+ */
+export async function markNeedsReview(
+  db: Db,
+  jobId: string,
+  outputs: StoredOutput[],
+  code: string,
+  message: string,
+  review: unknown,
+): Promise<boolean> {
+  const result = await db
+    .update(jobs)
+    .set({
+      status: 'needs_review',
+      outputsJson: JSON.stringify(outputs),
+      errorCode: code,
+      errorMessage: message.slice(0, 500),
+      reviewJson: JSON.stringify(review),
+      finishedAt: Date.now(),
+    })
+    .where(and(eq(jobs.id, jobId), inArray(jobs.status, ACTIVE)))
+    .run();
+  return result.meta.changes > 0;
+}
+
+/**
+ * Fallback for a Workflow that exited unexpectedly: an in-progress job still unfinished after the model timeout plus 15 minutes is failed and
+ * refunded when read. Only queued/submitted jobs are touched: needs_review waits for a human however long it takes, and is never auto-failed or refunded.
+ */
+export async function healStale(
+  db: Db,
+  job: JobRow,
+  timeoutMinutes: number | undefined,
+  now = Date.now(),
+  log?: (message: string, details: Record<string, unknown>) => void,
+): Promise<JobRow> {
+  if (job.status === 'failed' || job.status === 'canceled') {
+    // Settlement is idempotent: a refund that previously failed halfway is completed here.
+    await settleFailure(db, job);
+    return job;
+  }
+  if (job.status !== 'queued' && job.status !== 'submitted') return job;
+  const limit = ((timeoutMinutes ?? 30) + 15) * 60_000;
+  if (now - job.createdAt < limit) return job;
+  log?.('stale job failed on read', { jobId: job.id });
+  return (await markFailed(db, job.id, 'failed', 'stale', 'the job stopped responding')) ?? job;
 }
 
 /** Record the upstream charge of an ended job; only bookkeeping, it never touches state or credits, so a re-read simply overwrites it. */

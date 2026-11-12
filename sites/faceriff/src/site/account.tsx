@@ -69,6 +69,7 @@ const VERSIONS = ['song', 'silent'];
 
 function videoStatus(job: PublicJob) {
   if (job.status === 'queued' || job.status === 'submitted') return m.common_videos_rendering();
+  if (job.status === 'needs_review') return m.common_videos_review();
   if (job.status === 'failed') return m.common_videos_failed();
   if (job.status === 'canceled') return m.common_videos_canceled();
   return null;

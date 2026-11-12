@@ -7,7 +7,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export interface PublicJob {
   id: string;
   modelId: string;
-  status: 'queued' | 'submitted' | 'succeeded' | 'failed' | 'canceled';
+  /** needs_review: rendered, waiting for a human quality decision; no outputs until it is approved. */
+  status: 'queued' | 'submitted' | 'needs_review' | 'succeeded' | 'failed' | 'canceled';
   prompt: string;
   costCredits: number;
   outputs: { url: string; mediaType: string }[];

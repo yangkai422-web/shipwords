@@ -60,6 +60,8 @@ export default defineModels([
     maxCost: '3.40',
     // Usually about 8 minutes (6 to generate, 2 for the face check and compose), with room for upstream queues.
     timeoutMinutes: 30,
+    // Not a clear face-check pass, or compose failed: hold for the owner's review queue (/admin/review) instead of refunding or auto-delivering.
+    manualReview: true,
     effect: {
       slots: [
         { id: 'lead', label: 'Lead vocals', required: false },

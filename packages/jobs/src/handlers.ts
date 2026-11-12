@@ -8,13 +8,15 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import {
   claimGuestJobs,
   loadJob,
+  healStale as healStaleJob,
+  isQualityRetryHoldError,
+  isReviewPendingError,
   markFailed,
+  qualityRetryHold,
+  reviewPending,
   SKIPPED_UPSTREAM,
   type StoredOutput,
-  settleFailure,
   spendKey,
-  qualityRetryHold,
-  isQualityRetryHoldError,
   upstreamIds,
 } from './lifecycle';
 import { creditsFor, effectParts, type ModelDefinition, referenceRoleOf, sanitizeParameters } from './models';
@@ -26,6 +28,8 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const UPLOAD_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const UPLOADS_PER_DAY = 40;
 const RECAPTCHA_ACTION = 'generate';
+const REVIEW_PENDING_MESSAGE =
+  'Your previous video is being reviewed by our team for quality. You can start a new one as soon as that review is done (usually within 24 hours).';
 
 interface CreateBody {
   modelId?: string;
@@ -39,7 +43,9 @@ interface CreateBody {
 }
 
 export function publicJob(job: JobRow, baseURL: string) {
-  const outputs = job.outputsJson ? (JSON.parse(job.outputsJson) as StoredOutput[]) : [];
+  // Only delivered jobs expose outputs: a needs_review job has files in R2 that the customer must not get before a decision.
+  const pending = job.status === 'needs_review';
+  const outputs = job.outputsJson && !pending ? (JSON.parse(job.outputsJson) as StoredOutput[]) : [];
   return {
     id: job.id,
     modelId: job.modelId,
@@ -50,7 +56,7 @@ export function publicJob(job: JobRow, baseURL: string) {
       url: `${baseURL}/files/${output.key}`,
       mediaType: output.mediaType,
     })),
-    error: job.errorCode ? { code: job.errorCode, message: job.errorMessage } : null,
+    error: job.errorCode && !pending ? { code: job.errorCode, message: job.errorMessage } : null,
     createdAt: job.createdAt,
     finishedAt: job.finishedAt,
   };
@@ -79,18 +85,10 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
    * Fallback: if the Workflow exits unexpectedly the job stays in progress. Jobs still unfinished after the model timeout plus 15 minutes
    * are marked failed and refunded when the user views them, so no cron is needed.
    */
+  /** Stale in-progress jobs are failed and refunded on read (no cron needed); needs_review is left alone. See lifecycle.healStale. */
   async function healStale(job: JobRow): Promise<JobRow> {
-    if (job.status === 'failed' || job.status === 'canceled') {
-      // Settlement is idempotent: a refund that previously failed halfway is completed here.
-      await settleFailure(core.db, job);
-      return job;
-    }
-    if (job.status !== 'queued' && job.status !== 'submitted') return job;
     const model = models.find((m) => m.id === job.modelId);
-    const limit = ((model?.timeoutMinutes ?? 30) + 15) * 60_000;
-    if (Date.now() - job.createdAt < limit) return job;
-    core.log('stale job failed on read', { jobId: job.id });
-    return (await markFailed(core.db, job.id, 'failed', 'stale', 'the job stopped responding')) ?? job;
+    return healStaleJob(core.db, job, model?.timeoutMinutes, Date.now(), core.log);
   }
 
   async function ownedJob(request: Request, jobId: string) {
@@ -168,6 +166,9 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
 
       if (user) {
         const cost = creditsFor(model, parameters);
+        if (cost > 0 && (await reviewPending(core.db, user.id, model.id))) {
+          return errorResponse(409, 'review_pending', REVIEW_PENDING_MESSAGE);
+        }
         if (cost > 0 && await qualityRetryHold(core.db, user.id, model.id)) {
           return errorResponse(409, 'quality_review_required',
             'Your previous video needs a manual review. Your credits are safe; please contact support before trying again.');
@@ -194,6 +195,7 @@ export function createJobs(core: Core, models: readonly ModelDefinition[]) {
             await core.db.insert(jobs).values(row);
           }
         } catch (error) {
+          if (isReviewPendingError(error)) return errorResponse(409, 'review_pending', REVIEW_PENDING_MESSAGE);
           if (isQualityRetryHoldError(error)) {
             return errorResponse(409, 'quality_review_required',
               'Your previous video needs a manual review. Your credits are safe; please contact support before trying again.');

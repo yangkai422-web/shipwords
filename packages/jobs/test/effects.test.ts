@@ -4,10 +4,21 @@ import { createDb } from '@shipwords/core/db/client';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import type { ComposeInput, Composer, FaceCheckResult, FacesInput } from '../src/compose';
-import { appendUpstreamJob, isQualityRetryHoldError, loadJob, markFailed, spendKey } from '../src/lifecycle';
+import { publicJob } from '../src/handlers';
+import {
+  appendUpstreamJob,
+  healStale,
+  isQualityRetryHoldError,
+  isReviewPendingError,
+  loadJob,
+  markFailed,
+  reviewPending,
+  spendKey,
+} from '../src/lifecycle';
+import { approveReview, rejectReview } from '../src/review';
 import { defineModels, type EffectSegment, effectParts, type ModelDefinition } from '../src/models';
 import { PREP_HEDGE_MS, runGeneration, type StepRunner } from '../src/runner';
-import { jobs } from '../src/schema';
+import { jobReviews, jobs } from '../src/schema';
 import { type PollResult, type SubmitInput, type UpstreamAdapter, UpstreamError } from '../src/upstream';
 import { buildYirRequest } from '../src/yir';
 
@@ -718,6 +729,167 @@ describe('effect compose', () => {
         jobId, durableSteps());
       expect(await loadJob(db, jobId)).toMatchObject({ status: 'succeeded', errorCode: 'quality_review' });
       expect((await getBalance(db, userId)).available).toBe(40);
+    });
+
+    describe('manual review queue', () => {
+      const reviewModels = defineModels([{ ...checkModel, manualReview: true }]);
+      const reviewDeps = (adapter: FakeAdapter, composer: FakeComposer) => ({
+        ...checkDeps(adapter, composer),
+        models: reviewModels,
+      });
+      const retryRow = (userId: string, id: string) => ({
+        id, userId, modelId: 'demo-check', kind: 'video' as const,
+        prompt: '', inputJson: '{}', costCredits: 10, upstream: 'yir',
+      });
+      async function heldJob(verdict: 'review' | 'fail' = 'review') {
+        const created = await checkJob();
+        const composer = new FakeComposer();
+        composer.scores = [v2Result(verdict), v2Result('pass')];
+        const adapter = adapterFor(created.jobId);
+        await runGeneration(reviewDeps(adapter, composer), created.jobId, durableSteps());
+        return { ...created, composer, adapter };
+      }
+
+      it('grey zone: composed, held in needs_review, no refund, nothing served, scores and threshold recorded', async () => {
+        const { userId, jobId, composer, adapter } = await heldJob('review');
+        const job = await loadJob(db, jobId);
+        expect(job).toMatchObject({ status: 'needs_review', errorCode: 'review_grey' });
+        expect(composer.calls).toHaveLength(1);
+        expect(adapter.submits).toHaveLength(2);
+        expect(JSON.parse(job!.outputsJson!)).toEqual([
+          { key: `jobs/${jobId}/2.mp4`, mediaType: 'video/mp4' },
+          { key: `jobs/${jobId}/3.mp4`, mediaType: 'video/mp4' },
+        ]);
+        const review = JSON.parse(job!.reviewJson!);
+        expect(review).toMatchObject({ version: 1, composed: true, rawKey: `jobs/${jobId}/0.mp4`, composeError: null });
+        expect(review.notes).toEqual([
+          expect.objectContaining({ part: 'left', reason: 'grey', threshold: 0.6, scores: [0.615], slots: ['left'] }),
+        ]);
+        expect((await getBalance(db, userId)).available).toBe(40);
+        const shown = publicJob(job!, 'https://site.test');
+        expect(shown).toMatchObject({ status: 'needs_review', outputs: [], error: null });
+      });
+
+      it('clear fail: also held (not refunded, not delivered), compose still ran', async () => {
+        const { userId, jobId, composer } = await heldJob('fail');
+        expect(await loadJob(db, jobId)).toMatchObject({ status: 'needs_review', errorCode: 'review_swap_fail' });
+        expect(composer.calls).toHaveLength(1);
+        expect((await getBalance(db, userId)).available).toBe(40);
+      });
+
+      it('check outage and compose failure: held with the raw model output as preview, no refund', async () => {
+        const { userId, jobId } = await checkJob();
+        const composer = new FakeComposer();
+        composer.checkError = new Error('checker down');
+        composer.error = new Error('ffmpeg exploded');
+        await runGeneration(reviewDeps(adapterFor(jobId), composer), jobId, durableSteps());
+        const job = await loadJob(db, jobId);
+        expect(job).toMatchObject({ status: 'needs_review', errorCode: 'review_check_error' });
+        expect(JSON.parse(job!.outputsJson!)[0]).toEqual({ key: `jobs/${jobId}/0.mp4`, mediaType: 'video/mp4' });
+        expect(JSON.parse(job!.reviewJson!)).toMatchObject({ composed: false, composeError: 'ffmpeg exploded' });
+        expect((await getBalance(db, userId)).available).toBe(40);
+      });
+
+      it('clear pass still auto-delivers; compose failure alone is held as review_compose_failed', async () => {
+        const ok = await checkJob();
+        const okComposer = new FakeComposer();
+        okComposer.scores = [v2Result('pass'), v2Result('pass')];
+        await runGeneration(reviewDeps(adapterFor(ok.jobId), okComposer), ok.jobId, durableSteps());
+        expect(await loadJob(db, ok.jobId)).toMatchObject({ status: 'succeeded', errorCode: null });
+        const broken = await checkJob();
+        const composer = new FakeComposer();
+        composer.error = new Error('container gone');
+        await runGeneration(reviewDeps(adapterFor(broken.jobId), composer), broken.jobId, durableSteps());
+        expect(await loadJob(db, broken.jobId)).toMatchObject({ status: 'needs_review', errorCode: 'review_compose_failed' });
+        expect((await getBalance(db, broken.userId)).available).toBe(40);
+      });
+
+      it('approve: delivered as succeeded, credits stay spent, one success email, decision logged; repeat is a no-op', async () => {
+        const { userId, jobId } = await heldJob('review');
+        const sent: string[] = [];
+        const notify = async (job: { status: string }) => {
+          sent.push(job.status);
+        };
+        const first = await approveReview(db, jobId, 'owner@example.com', notify);
+        expect(first).toMatchObject({ ok: true, changed: true });
+        const job = await loadJob(db, jobId);
+        expect(job).toMatchObject({ status: 'succeeded', errorCode: null, errorMessage: null });
+        expect(publicJob(job!, 'https://site.test').outputs).toHaveLength(2);
+        expect(await approveReview(db, jobId, 'owner@example.com', notify)).toMatchObject({ ok: true, changed: false });
+        expect(await rejectReview(db, jobId, 'owner@example.com', notify)).toMatchObject({ ok: false, reason: 'already_decided' });
+        expect(sent).toEqual(['succeeded']);
+        expect((await getBalance(db, userId)).available).toBe(40);
+        const [log] = await db.select().from(jobReviews).where(eq(jobReviews.jobId, jobId));
+        expect(log).toMatchObject({ action: 'approved', adminEmail: 'owner@example.com', previousCode: 'review_grey' });
+        expect(log?.createdAt).toBeGreaterThan(0);
+      });
+
+      it('reject: refund exactly once, *_reviewed code, not held afterwards, one failure email; repeats never refund again', async () => {
+        const { userId, jobId } = await heldJob('fail');
+        const sent: string[] = [];
+        const notify = async (job: { status: string }) => {
+          sent.push(job.status);
+        };
+        const results = await Promise.all([
+          rejectReview(db, jobId, 'owner@example.com', notify),
+          rejectReview(db, jobId, 'owner@example.com', notify),
+        ]);
+        expect(results.filter((r) => r.ok && r.changed)).toHaveLength(1);
+        expect(await rejectReview(db, jobId, 'owner@example.com', notify)).toMatchObject({ ok: true, changed: false });
+        await markFailed(db, jobId, 'failed', 'again', 'again');
+        expect(await loadJob(db, jobId)).toMatchObject({ status: 'failed', errorCode: 'review_swap_fail_reviewed' });
+        expect((await getBalance(db, userId)).available).toBe(50);
+        expect(sent).toEqual(['failed']);
+        expect(await approveReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: false, reason: 'already_decided' });
+        // Neither the paid-failure guard nor the quality hold matches a reviewed rejection: the customer can buy a new attempt.
+        await spendCredits(db, { userId, amount: 10, idemKey: spendKey(`${jobId}_next`), ref: `${jobId}_next` },
+          [db.insert(jobs).values(retryRow(userId, `${jobId}_next`))]);
+        expect((await getBalance(db, userId)).available).toBe(40);
+      });
+
+      it('only needs_review jobs can be decided', async () => {
+        const { jobId } = await checkJob();
+        expect(await approveReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: false, reason: 'not_pending' });
+        expect(await rejectReview(db, 'job_missing', 'owner@example.com')).toMatchObject({ ok: false, reason: 'not_found' });
+      });
+
+      it('stale sweeper and user cancel never fail or refund a needs_review job, however old', async () => {
+        const { userId, jobId } = await heldJob('review');
+        const job = (await loadJob(db, jobId))!;
+        const later = job.createdAt + 7 * 24 * 3600_000;
+        expect(await healStale(db, job, 20, later)).toMatchObject({ status: 'needs_review' });
+        await markFailed(db, jobId, 'failed', 'timeout', 'late');
+        await markFailed(db, jobId, 'canceled', 'canceled', 'canceled by user');
+        expect(await loadJob(db, jobId)).toMatchObject({ status: 'needs_review', errorCode: 'review_grey' });
+        expect((await getBalance(db, userId)).available).toBe(40);
+        // Still heals genuinely stuck in-progress jobs.
+        const stuck = await checkJob();
+        const stuckRow = (await loadJob(db, stuck.jobId))!;
+        expect(await healStale(db, stuckRow, 20, stuckRow.createdAt + 36 * 60_000)).toMatchObject({ status: 'failed', errorCode: 'stale' });
+      });
+
+      it('retry hold while pending: a new paid job of the same model is blocked atomically, released by either decision', async () => {
+        const { userId, jobId } = await heldJob('review');
+        expect(await reviewPending(db, userId, 'demo-check')).toBe(jobId);
+        const nextId = `${jobId}_next`;
+        let blocked: unknown;
+        try {
+          await spendCredits(db, { userId, amount: 10, idemKey: spendKey(nextId), ref: nextId },
+            [db.insert(jobs).values(retryRow(userId, nextId))]);
+        } catch (error) { blocked = error; }
+        expect(isReviewPendingError(blocked)).toBe(true);
+        expect(isQualityRetryHoldError(blocked)).toBe(false);
+        expect(await loadJob(db, nextId)).toBeNull();
+        expect((await getBalance(db, userId)).available).toBe(40);
+        // Other models are not affected.
+        await spendCredits(db, { userId, amount: 10, idemKey: spendKey(`${nextId}_other`), ref: `${nextId}_other` },
+          [db.insert(jobs).values({ ...retryRow(userId, `${nextId}_other`), modelId: 'demo' })]);
+        await approveReview(db, jobId, 'owner@example.com');
+        expect(await reviewPending(db, userId, 'demo-check')).toBeNull();
+        await spendCredits(db, { userId, amount: 10, idemKey: spendKey(nextId), ref: nextId },
+          [db.insert(jobs).values(retryRow(userId, nextId))]);
+        expect((await getBalance(db, userId)).available).toBe(20);
+      });
     });
 
     it('swapped: checks each segment once, only the filled slots, trim over the raw target, stretch over the model duration', async () => {

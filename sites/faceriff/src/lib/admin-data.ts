@@ -112,11 +112,15 @@ export interface Dashboard {
   orders: RecentOrder[];
   jobs: RecentJob[];
   held: HeldAccount[];
+  /** Jobs waiting in the manual review queue (all time, not limited to the range). */
+  pendingReviews: number;
   otherCurrencies: { currency: string; amount: number; orders: number }[];
 }
 
 const date = (column: string) => `date(${column}/1000, 'unixepoch', '+8 hours')`;
-const held = "j.status='failed' AND j.error_code IN ('swap_not_applied','swap_not_applied_v2')";
+// Same conditions as the D1 triggers jobs_quality_retry_guard (permanent until *_reviewed); needs_review holds are temporary and counted separately.
+const held = `j.status='failed' AND (j.error_code IN ('swap_not_applied','swap_not_applied_v2')
+  OR (j.upstream_job_id IS NOT NULL AND j.error_code IN ('internal_error','stale','timeout','check_failed')))`;
 // Segment IDs are recorded comma-separated; skipped prep slots are not paid generations.
 const generations = `CASE WHEN upstream='yir' AND trim(coalesce(upstream_job_id,''))<>'' THEN
   max(0, 1+length(upstream_job_id)-length(replace(upstream_job_id,',',''))
@@ -153,7 +157,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       `WITH task AS (SELECT *,${generations} generations FROM jobs WHERE created_at>=? AND created_at<?)
       SELECT ${date('j.created_at')} day,count(*) jobs,
       sum(j.status='succeeded' AND coalesce(j.error_code,'')<>'quality_review') succeeded,
-      sum(j.status='succeeded' AND j.error_code='quality_review') review,
+      sum((j.status='succeeded' AND j.error_code='quality_review') OR j.status='needs_review') review,
       sum(j.status='failed') failed,sum(j.status='canceled') canceled,
       sum(j.status IN ('queued','submitted')) active,
       sum(EXISTS(SELECT 1 FROM credit_ledger c WHERE c.idem_key='refund:job:'||j.id AND c.kind='refund')) creditRefunds,
@@ -170,7 +174,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       `SELECT o.id,u.email,o.product_id productId,o.status,o.amount,o.currency,o.created_at createdAt,o.paid_at paidAt,
       (SELECT count(*) FROM jobs j WHERE j.user_id=o.user_id AND j.created_at>=? AND j.created_at<?) sameAccountJobs,
       (SELECT count(*) FROM jobs j WHERE j.user_id=o.user_id AND j.created_at>=? AND j.created_at<? AND j.status='succeeded' AND coalesce(j.error_code,'')<>'quality_review') succeeded,
-      (SELECT count(*) FROM jobs j WHERE j.user_id=o.user_id AND j.created_at>=? AND j.created_at<? AND j.status='succeeded' AND j.error_code='quality_review') review,
+      (SELECT count(*) FROM jobs j WHERE j.user_id=o.user_id AND j.created_at>=? AND j.created_at<? AND ((j.status='succeeded' AND j.error_code='quality_review') OR j.status='needs_review')) review,
       (SELECT count(*) FROM jobs j WHERE j.user_id=o.user_id AND j.created_at>=? AND j.created_at<? AND j.status='failed') failed,
       (SELECT coalesce(sum(p.amount_refunded),0) FROM payments p WHERE p.order_id=o.id) cashRefund
       FROM orders o LEFT JOIN user u ON u.id=o.user_id WHERE (o.created_at>=? AND o.created_at<?) OR (o.paid_at>=? AND o.paid_at<?)
@@ -212,6 +216,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
     q(
       'SELECT min(day_utc) fromDay,max(day_utc) toDay,max(fetched_at) fetchedAt,group_concat(CASE WHEN is_partial=1 THEN day_utc END) partialDays FROM cf_daily_traffic',
     ),
+    q("SELECT count(*) n FROM jobs WHERE status='needs_review'"),
   ]);
   const rows = (index: number) => result[index]?.results ?? [];
   const started = rows(0)[0]?.value;
@@ -291,6 +296,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
     orders: (rows(6) as unknown as RecentOrder[]).map((o) => ({ ...o, email: maskEmail(o.email) })),
     jobs: (rows(7) as unknown as RecentJob[]).map((j) => ({ ...j, email: maskEmail(j.email) })),
     held: (rows(8) as unknown as HeldAccount[]).map((h) => ({ ...h, email: maskEmail(h.email) })),
+    pendingReviews: Number(rows(12)[0]?.n ?? 0),
     otherCurrencies: rows(9) as unknown as Dashboard['otherCurrencies'],
   };
 }

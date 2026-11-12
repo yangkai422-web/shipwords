@@ -25,6 +25,12 @@ export interface ModelDefinition {
   referenceRole?: 'reference_image' | 'first_frame';
   /** Effects: prompts and reference videos are preset server-side; users only upload photos per slot. */
   effect?: EffectSpec;
+  /**
+   * Manual review queue (effects with checks/compose): once the model has rendered, anything but a clear face-check pass (clear fail, grey zone,
+   * check unavailable) and any compose failure put the job in needs_review instead of delivering or refunding it. Credits stay spent until an admin
+   * approves (deliver) or rejects (refund once). Without it, the older automatic behaviour applies.
+   */
+  manualReview?: boolean;
 }
 
 export interface EffectSlot {

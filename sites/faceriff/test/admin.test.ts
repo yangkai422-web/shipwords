@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { handleAdminRequest, isAdmin, renderDashboard } from '../src/lib/admin.server';
+import { loadReviewQueue, renderReviewPage } from '../src/lib/admin-review';
 import { dateRange, loadDashboard, maskEmail, shanghaiDay, visitorReference } from '../src/lib/admin-data';
 import { referrerPlatform, visitorDimensions } from '../src/lib/visitor-dimensions';
 import { isVisitorRequest, recordVisitor, visitorHash } from '../src/lib/visitors';
@@ -56,6 +57,7 @@ beforeEach(async () => {
     'cf_daily_traffic',
     'daily_visitors',
     'analytics_meta',
+    'job_reviews',
     'credit_ledger',
     'payments',
     'orders',
@@ -560,5 +562,157 @@ describe('privacy-safe first-visit dimensions', () => {
     expect((await handleAdminRequest(req('/api/admin/dashboard'), adminEnv, async () => null))?.status).toBe(
       404,
     );
+  });
+});
+
+describe('manual review queue', () => {
+  const origin = 'https://faceriff.com';
+  const review = JSON.stringify({
+    version: 1,
+    composed: true,
+    composeError: null,
+    rawKey: 'jobs/job_held/0.mp4',
+    notes: [
+      {
+        part: 'full',
+        reason: 'grey',
+        threshold: 0.55,
+        scores: [0.31, 0.61],
+        slots: ['lead', 'sax'],
+        quality: {
+          version: 2,
+          verdict: 'review',
+          similarity: [0.31, 0.61],
+          sampleCount: 36,
+          roles: [
+            { index: 0, verdict: 'pass', visible: 6, valid: 6, peak: 0.31, strong: 0, strongFraction: 0, longestStrongRun: 0, weak: 0 },
+            { index: 1, verdict: 'review', visible: 6, valid: 6, peak: 0.61, strong: 1, strongFraction: 0.17, longestStrongRun: 1, weak: 3 },
+          ],
+        },
+      },
+    ],
+  });
+  async function held() {
+    await user();
+    await sql(
+      "INSERT INTO jobs(id,user_id,model_id,kind,prompt,input_json,status,upstream,upstream_job_id,error_code,outputs_json,review_json,cost_credits,created_at,finished_at) VALUES ('job_held','u','tiny-desk','video','private prompt','{}','needs_review','yir','up_h','review_grey',?,?,10,?,?)",
+      JSON.stringify([{ key: 'jobs/job_held/1.mp4', mediaType: 'video/mp4' }]),
+      review,
+      now,
+      now + 60_000,
+    );
+    await env.OUTPUTS.put('jobs/job_held/1.mp4', '0123456789');
+    await env.OUTPUTS.put('jobs/job_held/0.mp4', 'raw-bytes');
+  }
+  const post = (body: string, headers: Record<string, string> = { origin }) =>
+    new Request(`${origin}/admin/review/action`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+      body,
+    });
+
+  it('non-admins get 404 everywhere (including the POST action); anonymous queue visits go to login', async () => {
+    await held();
+    for (const u of [null, { ...owner, email: 'customer@example.com' }]) {
+      for (const r of [
+        req('/admin/review/confirm?job=job_held&action=approve'),
+        req('/api/admin/review-video?job=job_held'),
+        post('job=job_held&action=approve'),
+      ])
+        expect((await handleAdminRequest(r, adminEnv, async () => u))?.status).toBe(404);
+      const queue = await handleAdminRequest(req('/admin/review'), adminEnv, async () => u);
+      expect(queue?.status).toBe(u ? 404 : 302);
+    }
+    expect((await env.DB.prepare("SELECT status FROM jobs WHERE id='job_held'").first())?.status).toBe('needs_review');
+  });
+
+  it('lists pending jobs with full email, Shanghai time, per-role scores, threshold and inline preview; dashboard shows the count', async () => {
+    await held();
+    const r = await handleAdminRequest(req('/admin/review'), adminEnv, async () => owner);
+    expect(r?.status).toBe(200);
+    expect(r?.headers.get('content-security-policy')).toContain("media-src 'self'");
+    const html = await r!.text();
+    expect(html).toContain('danger@example.com');
+    expect(html).toContain('2026/11/11 12:00:00');
+    expect(html).toContain('Lead vocals');
+    expect(html).toContain('0.610');
+    expect(html).toContain('阈值 0.55');
+    expect(html).toContain('/api/admin/review-video?job=job_held');
+    expect(html).not.toContain('private prompt');
+    const d = await loadDashboard(env.DB, range());
+    expect(d.pendingReviews).toBe(1);
+    expect(renderDashboard(d)).toContain('href="/admin/review"');
+    const empty = renderReviewPage({ pending: [], history: [] });
+    expect(empty).toContain('目前没有待审核任务');
+  });
+
+  it('streams the held video inline with Range, raw on request, never unrelated keys', async () => {
+    await held();
+    const full = await handleAdminRequest(req('/api/admin/review-video?job=job_held'), adminEnv, async () => owner);
+    expect(full?.status).toBe(200);
+    expect(full?.headers.get('content-disposition')).toContain('inline');
+    expect(await full?.text()).toBe('0123456789');
+    const part = await handleAdminRequest(
+      new Request(`${origin}/api/admin/review-video?job=job_held`, { headers: { range: 'bytes=2-5' } }),
+      adminEnv,
+      async () => owner,
+    );
+    expect(part?.status).toBe(206);
+    expect(part?.headers.get('content-range')).toBe('bytes 2-5/10');
+    expect(await part?.text()).toBe('2345');
+    const raw = await handleAdminRequest(req('/api/admin/review-video?job=job_held&v=raw'), adminEnv, async () => owner);
+    expect(await raw?.text()).toBe('raw-bytes');
+    await sql("UPDATE jobs SET outputs_json=? WHERE id='job_held'", JSON.stringify([{ key: 'uploads/up_x.png' }]));
+    expect(
+      (await handleAdminRequest(req('/api/admin/review-video?job=job_held'), adminEnv, async () => owner))?.status,
+    ).toBe(404);
+  });
+
+  it('confirm page, then same-origin POST approves once and logs who; cross-site or malformed posts change nothing', async () => {
+    await held();
+    const confirm = await handleAdminRequest(
+      req('/admin/review/confirm?job=job_held&action=approve'),
+      adminEnv,
+      async () => owner,
+    );
+    expect(confirm?.status).toBe(200);
+    expect(await confirm?.text()).toContain('action="/admin/review/action"');
+    for (const bad of [
+      post('job=job_held&action=approve', { origin: 'https://evil.example' }),
+      post('job=job_held&action=approve', { origin, 'sec-fetch-site': 'cross-site' }),
+      post('job=job_held&action=approve', {}),
+    ])
+      expect((await handleAdminRequest(bad, adminEnv, async () => owner))?.status).toBe(403);
+    expect((await handleAdminRequest(post('job=job_held&action=delete'), adminEnv, async () => owner))?.status).toBe(400);
+    expect((await handleAdminRequest(req('/admin/review/action'), adminEnv, async () => owner))?.status).toBe(405);
+    expect((await env.DB.prepare("SELECT status FROM jobs WHERE id='job_held'").first())?.status).toBe('needs_review');
+    const ok = await handleAdminRequest(post('job=job_held&action=approve'), adminEnv, async () => owner);
+    expect(ok?.status).toBe(303);
+    expect(ok?.headers.get('location')).toBe('/admin/review?done=approved&job=job_held');
+    const again = await handleAdminRequest(post('job=job_held&action=approve'), adminEnv, async () => owner);
+    expect(again?.headers.get('location')).toBe('/admin/review?done=noop&job=job_held');
+    const job = await env.DB.prepare("SELECT status,error_code FROM jobs WHERE id='job_held'").first();
+    expect(job).toMatchObject({ status: 'succeeded', error_code: null });
+    const log = await env.DB.prepare("SELECT action,admin_email FROM job_reviews WHERE job_id='job_held'").first();
+    expect(log).toMatchObject({ action: 'approved', admin_email: owner.email });
+    const page = await (await handleAdminRequest(req('/admin/review'), adminEnv, async () => owner))!.text();
+    expect(page).toContain('最近 30 天审核记录');
+    expect(page).toContain('通过并交付</span>');
+    const { pending, history } = await loadReviewQueue(env.DB);
+    expect(pending).toHaveLength(0);
+    expect(history).toHaveLength(1);
+    expect(
+      (await handleAdminRequest(req('/admin/review/confirm?job=job_held&action=reject'), adminEnv, async () => owner))
+        ?.status,
+    ).toBe(409);
+  });
+
+  it('reject marks failed with a *_reviewed code (not a held account)', async () => {
+    await held();
+    const r = await handleAdminRequest(post('job=job_held&action=reject'), adminEnv, async () => owner);
+    expect(r?.headers.get('location')).toBe('/admin/review?done=rejected&job=job_held');
+    const job = await env.DB.prepare("SELECT status,error_code FROM jobs WHERE id='job_held'").first();
+    expect(job).toMatchObject({ status: 'failed', error_code: 'review_grey_reviewed' });
+    expect((await loadDashboard(env.DB, range())).held).toHaveLength(0);
   });
 });
