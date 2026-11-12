@@ -847,6 +847,48 @@ describe('effect compose', () => {
         expect((await getBalance(db, userId)).available).toBe(40);
       });
 
+      it('reject whose log write was lost is finished by a retry: refund stays single, log written, no second email', async () => {
+        const { userId, jobId } = await heldJob('review');
+        await rejectReview(db, jobId, 'owner@example.com');
+        await db.delete(jobReviews).where(eq(jobReviews.jobId, jobId));
+        const sent: string[] = [];
+        const retry = await rejectReview(db, jobId, 'owner@example.com', async (job) => {
+          sent.push(job.status);
+        });
+        expect(retry).toMatchObject({ ok: true, changed: false, emailed: null });
+        expect(sent).toEqual([]);
+        expect((await getBalance(db, userId)).available).toBe(50);
+        const [log] = await db.select().from(jobReviews).where(eq(jobReviews.jobId, jobId));
+        expect(log).toMatchObject({ action: 'rejected', previousCode: 'review_grey' });
+        expect(await approveReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: false, reason: 'already_decided' });
+      });
+
+      it('approve whose log write was lost: a repeat is a no-op that writes the log, and reject is refused', async () => {
+        const { userId, jobId } = await heldJob('review');
+        await approveReview(db, jobId, 'owner@example.com');
+        await db.delete(jobReviews).where(eq(jobReviews.jobId, jobId));
+        expect(await rejectReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: false, reason: 'already_decided' });
+        expect(await approveReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: true, changed: false });
+        expect(await db.select().from(jobReviews).where(eq(jobReviews.jobId, jobId))).toHaveLength(1);
+        expect((await getBalance(db, userId)).available).toBe(40);
+      });
+
+      it('email failure never undoes a decision and is reported', async () => {
+        const failing = async () => {
+          throw new Error('mail down');
+        };
+        const approved = await heldJob('review');
+        expect(await approveReview(db, approved.jobId, 'owner@example.com', failing)).toMatchObject({
+          ok: true, changed: true, emailed: false,
+        });
+        expect(await loadJob(db, approved.jobId)).toMatchObject({ status: 'succeeded' });
+        const rejected = await heldJob('fail');
+        expect(await rejectReview(db, rejected.jobId, 'owner@example.com', failing)).toMatchObject({
+          ok: true, changed: true, emailed: false,
+        });
+        expect((await getBalance(db, rejected.userId)).available).toBe(50);
+      });
+
       it('only needs_review jobs can be decided', async () => {
         const { jobId } = await checkJob();
         expect(await approveReview(db, jobId, 'owner@example.com')).toMatchObject({ ok: false, reason: 'not_pending' });

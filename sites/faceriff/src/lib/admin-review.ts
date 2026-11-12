@@ -122,12 +122,14 @@ export function renderReviewPage(
   const doneText: Record<string, string> = {
     approved: '已通过并交付，客户会收到成片邮件。',
     rejected: '已拒绝并退回积分，客户会收到失败邮件。',
+    approved_nomail: '已通过并交付，但给客户的邮件发送失败，请手动通知客户。',
+    rejected_nomail: '已拒绝并退回积分，但给客户的邮件发送失败，请手动通知客户。',
     noop: '这个任务之前已经处理过，没有重复操作。',
     error: '操作没有完成：任务不存在或已不在待审核状态。',
   };
   const notice =
     flash.done && doneText[flash.done]
-      ? `<div class="notice${flash.done === 'error' ? ' warn' : ''}">${escapeHtml(flash.job ?? '')} ${escapeHtml(doneText[flash.done])}</div>`
+      ? `<div class="notice${flash.done === 'error' || flash.done.endsWith('_nomail') ? ' warn' : ''}">${escapeHtml(flash.job ?? '')} ${escapeHtml(doneText[flash.done])}</div>`
       : '';
   const items = data.pending.map((job) => {
     const review = parse<ReviewInfo>(job.reviewJson);
@@ -280,9 +282,7 @@ export async function handleReviewRequest(
     }
     const done = result.ok
       ? result.changed
-        ? action === 'approve'
-          ? 'approved'
-          : 'rejected'
+        ? `${action === 'approve' ? 'approved' : 'rejected'}${result.emailed === false ? '_nomail' : ''}`
         : 'noop'
       : 'error';
     console.log(JSON.stringify({ event: 'admin_review_decision', jobId: id, action, outcome: done }));

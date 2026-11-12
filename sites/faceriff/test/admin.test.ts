@@ -707,6 +707,20 @@ describe('manual review queue', () => {
     ).toBe(409);
   });
 
+  it('a failed customer email keeps the decision and tells the owner to follow up', async () => {
+    await held();
+    const mailEnv = {
+      ...adminEnv,
+      EMAIL_FROM: 'noreply@faceriff.com',
+      EMAIL: { send: async () => { throw new Error('mail down'); } } as unknown as SendEmail,
+    };
+    const r = await handleAdminRequest(post('job=job_held&action=approve'), mailEnv, async () => owner);
+    expect(r?.headers.get('location')).toBe('/admin/review?done=approved_nomail&job=job_held');
+    expect((await env.DB.prepare("SELECT status FROM jobs WHERE id='job_held'").first())?.status).toBe('succeeded');
+    const flash = await (await handleAdminRequest(req('/admin/review?done=approved_nomail&job=job_held'), adminEnv, async () => owner))!.text();
+    expect(flash).toContain('邮件发送失败');
+  });
+
   it('reject marks failed with a *_reviewed code (not a held account)', async () => {
     await held();
     const r = await handleAdminRequest(post('job=job_held&action=reject'), adminEnv, async () => owner);
