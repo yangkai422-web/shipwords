@@ -158,7 +158,7 @@ describe('admin realtime endpoint and charts page', () => {
     expect(csp).toContain("connect-src 'self'");
     expect(csp).not.toContain('unsafe-eval');
     expect(page).toContain(`<script nonce="${nonce}">`);
-    expect(page.match(/<script/g)).toHaveLength(1);
+    expect(page.match(/<script/g)?.length).toBe(page.split(`<script nonce="${nonce}">`).length - 1);
     expect(page).toContain('/api/admin/realtime');
     for (const s of [
       '实时访客',

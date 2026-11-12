@@ -9,6 +9,7 @@ import { core } from './core.server';
 import { handleAdminRequest } from './lib/admin.server';
 import { handleAdminLogin } from './lib/admin-login.server';
 import { isVisitorRequest, recordVisitor } from './lib/visitors';
+import { refreshYirBalance } from './lib/yir-balance';
 
 // Worker entry: pages and API go to TanStack Start, plus the Workflow class for generation jobs and the compose container.
 export const GenerationWorkflow = defineGenerationWorkflow(models, site);
@@ -79,5 +80,9 @@ export default {
       );
     }
     return response;
+  },
+  // Cron (wrangler.jsonc triggers): keep the Yir balance snapshot fresh for the dashboard even when nobody has it open.
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(refreshYirBalance(env, { maxAge: 60_000 }).then(() => undefined));
   },
 } satisfies ExportedHandler<Env>;

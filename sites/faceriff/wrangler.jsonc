@@ -7,12 +7,16 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Every 15 minutes: refresh the Yir balance snapshot for the owner dashboard (one GET /v1/balance + one D1 write).
+  "triggers": { "crons": ["*/15 * * * *"] },
   "upload_source_maps": true,
   // Add your domain before deploying: "routes": [{ "pattern": "your-domain.com", "custom_domain": true }],
   "vars": {
     "EMAIL_FROM": "noreply@faceriff.com",
     // Rybbit collector URL, used only inside the Worker (/stats/* proxy); leave empty to disable.
-    "RYBBIT_UPSTREAM": ""
+    "RYBBIT_UPSTREAM": "",
+    // Owner dashboard: warn when Yir available balance is below this (USD) or below 5 jobs' worth, whichever is higher.
+    "YIR_LOW_BALANCE_USD": "10"
   },
   "d1_databases": [
     {
