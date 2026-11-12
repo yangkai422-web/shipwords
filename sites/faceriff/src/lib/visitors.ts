@@ -1,4 +1,5 @@
 import { DAY, shanghaiDay } from './admin-data';
+import { realtimeStatements } from './realtime';
 import { visitorDimensions } from './visitor-dimensions';
 
 export function isVisitorRequest(request: Request, response: Response): boolean {
@@ -54,7 +55,8 @@ export async function recordVisitor(
     request.headers.get('cf-connecting-ip') ?? '',
     request.headers.get('user-agent') ?? '',
   );
-  const dimensions = Object.entries(visitorDimensions(request));
+  const dims = visitorDimensions(request);
+  const dimensions = Object.entries(dims);
   // D1 batch is a serial, atomic transaction. Increment before inserting the dedup marker:
   // duplicate/concurrent requests cannot increment a second time, and failures roll back both.
   await db.batch([
@@ -75,5 +77,7 @@ export async function recordVisitor(
       .bind(day, hash),
     db.prepare('DELETE FROM daily_visitors WHERE day<?').bind(shanghaiDay(now - 90 * DAY)),
     db.prepare('DELETE FROM daily_visitor_dimensions WHERE day<?').bind(shanghaiDay(now - 90 * DAY)),
+    // Realtime: every qualifying page view (not only the first of the day), same hashed identity.
+    ...realtimeStatements(db, hash, new URL(request.url).pathname, dims, now),
   ]);
 }

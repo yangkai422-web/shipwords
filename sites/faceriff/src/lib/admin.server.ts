@@ -1,7 +1,9 @@
 import { isAllowlistedEmail } from './admin-access';
+import { CHART_CSS, realtimeJson, renderCharts, renderRealtime } from './admin-charts';
 import { type Dashboard, dateRange, loadDashboard, visitorReference } from './admin-data';
 import type { DimensionCount, TrafficDimensions } from './admin-dimensions';
 import { handleReviewRequest } from './admin-review';
+import { type Charts, loadCharts, loadRealtime, type Realtime } from './realtime';
 import { dimensionNames } from './visitor-dimensions';
 
 export interface AdminUser {
@@ -30,8 +32,15 @@ export const secureHeaders = {
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   vary: 'Cookie',
 };
-const html = (body: string, status = 200) =>
-  new Response(body, { status, headers: { ...secureHeaders, 'content-type': 'text/html; charset=utf-8' } });
+const html = (body: string, status = 200, extra: Record<string, string> = {}) =>
+  new Response(body, {
+    status,
+    headers: { ...secureHeaders, 'content-type': 'text/html; charset=utf-8', ...extra },
+  });
+/** Dashboard only: one inline script (realtime refresh) allowed by a per-response nonce; fetches same-origin only. */
+export const dashboardCsp = (nonce: string) =>
+  `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`;
+const newNonce = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
 export const escapeHtml = (s: unknown) =>
   String(s ?? '').replace(
     /[&<>"']/g,
@@ -59,7 +68,7 @@ const table = (heads: string[], body: string) =>
   `<div class="scroll"><table><thead><tr>${heads.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${body || `<tr><td colspan="${heads.length}">此范围暂无记录</td></tr>`}</tbody></table></div>`;
 
 const countries = new Intl.DisplayNames(['zh-CN'], { type: 'region' });
-const dimensionLabel = (dimension: string, value: string) => {
+export const dimensionLabel = (dimension: string, value: string) => {
   if (dimension === 'utm_source')
     return value === '__none__' ? '未设置' : value === '__redacted__' ? '已过滤（非安全标签）' : value;
   if (dimension === 'country') {
@@ -155,7 +164,12 @@ function renderDimensions(d: TrafficDimensions): string {
     (cf || '<p>尚未导入 Cloudflare 来源维度。</p>')
   );
 }
-export function renderDashboard(data: Dashboard): string {
+export interface LiveSections {
+  realtime: Realtime;
+  charts: Charts;
+  nonce: string;
+}
+export function renderDashboard(data: Dashboard, live?: LiveSections): string {
   const { totals: t, range: r } = data;
   const kpis = [
     [
@@ -187,9 +201,11 @@ export function renderDashboard(data: Dashboard): string {
     ['估算差额*', money(t.margin), '收款 − 现金退款 − Yir 成本；不等于利润'],
   ];
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>FaceRiff · 经营后台</title><style>
-  *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef0ff;font:14px/1.65 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px 24px}a{color:#ff839a}h1{font-size:30px;margin:0}h2{font-size:20px;margin:30px 0 10px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.tag{color:#c6f432;font-size:12px;letter-spacing:2px}p,.muted{color:#aeb5d4}.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0}input,button,.pill{background:#151b33;border:1px solid #eef0ff30;color:#eef0ff;border-radius:8px;padding:9px 12px}button{background:#ff4d6d;color:#fff;cursor:pointer}.pill{text-decoration:none}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:#151b33;border:1px solid #eef0ff1f;border-radius:14px;padding:18px}.value{font:700 30px/1.4 ui-monospace,monospace;margin:6px 0}.card small{color:#aeb5d4}.notice{border-left:3px solid #c6f432;background:#151b33;padding:12px 16px;margin:18px 0}.scroll{overflow:auto;border:1px solid #eef0ff22;border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;background:#10162a}th,td{padding:12px;text-align:left;border-bottom:1px solid #eef0ff16;font-variant-numeric:tabular-nums}th{color:#c9cde8;background:#151b33;position:sticky;top:0}tbody tr:hover{background:#151b33}.badge{padding:3px 8px;border-radius:6px;background:#3b3450;color:#ffe5a1}.good{background:#263c2c;color:#c6f432}.bad{background:#4c2435;color:#ff9aaf}details{background:#151b33;padding:16px;border-radius:12px;margin-top:20px}li{margin:7px 0}footer{margin:28px 0;color:#8f95b8}@media(max-width:900px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:20px 12px}}@media(max-width:480px){.cards{grid-template-columns:1fr}.top{display:block}}
+  *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef0ff;font:14px/1.65 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px 24px}a{color:#ff839a}h1{font-size:30px;margin:0}h2{font-size:20px;margin:30px 0 10px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.tag{color:#c6f432;font-size:12px;letter-spacing:2px}p,.muted{color:#aeb5d4}.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0}input,button,.pill{background:#151b33;border:1px solid #eef0ff30;color:#eef0ff;border-radius:8px;padding:9px 12px}button{background:#ff4d6d;color:#fff;cursor:pointer}.pill{text-decoration:none}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:#151b33;border:1px solid #eef0ff1f;border-radius:14px;padding:18px}.value{font:700 30px/1.4 ui-monospace,monospace;margin:6px 0}.card small{color:#aeb5d4}.notice{border-left:3px solid #c6f432;background:#151b33;padding:12px 16px;margin:18px 0}.scroll{overflow:auto;border:1px solid #eef0ff22;border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;background:#10162a}th,td{padding:12px;text-align:left;border-bottom:1px solid #eef0ff16;font-variant-numeric:tabular-nums}th{color:#c9cde8;background:#151b33;position:sticky;top:0}tbody tr:hover{background:#151b33}.badge{padding:3px 8px;border-radius:6px;background:#3b3450;color:#ffe5a1}.good{background:#263c2c;color:#c6f432}.bad{background:#4c2435;color:#ff9aaf}details{background:#151b33;padding:16px;border-radius:12px;margin-top:20px}li{margin:7px 0}footer{margin:28px 0;color:#8f95b8}@media(max-width:900px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:20px 12px}}@media(max-width:480px){.cards{grid-template-columns:1fr}.top{display:block}}${CHART_CSS}
   </style></head><body><main><header class="top"><div><div class="tag">FACERIFF · OWNER ONLY</div><h1>经营与交付后台</h1><div class="muted">只读 · Asia/Shanghai (UTC+8) · ${escapeHtml(time(Date.now()))}</div></div><nav class="filters"><a class="pill review-link" href="/admin/review">待审核任务 <span class="badge ${data.pendingReviews > 0 ? 'bad' : 'good'}">${data.pendingReviews}</span></a><a href="/">返回网站</a></nav></header>
   ${data.pendingReviews > 0 ? `<div class="notice">有 <strong>${data.pendingReviews}</strong> 个视频等待人工审核（客户积分已扣、尚未交付）。<a href="/admin/review">去审核</a></div>` : ''}
+  ${live ? renderRealtime(live.realtime, dimensionLabel, live.nonce) + renderCharts(live.charts, dimensionLabel) : ''}
+  <h2>经营明细</h2>
   <form class="filters" method="get" action="/admin"><a class="pill" href="/admin?days=7">最近 7 天</a><a class="pill" href="/admin?days=30">最近 30 天</a><label>从 <input type="date" name="from" value="${r.from}" required></label><label>到 <input type="date" name="to" value="${r.to}" required></label><button type="submit">查看</button><span class="muted">最多 90 天 · 今天尚未结束</span></form>
   <div class="cards">${kpis.map(([label, value, note]) => `<section class="card"><div>${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div><small>${escapeHtml(note)}</small></section>`).join('')}</div>
   <div class="notice">第一方访客统计启用：${escapeHtml(time(data.trackingStartedAt))}（Asia/Shanghai）。启用当日只有部分时段；此前如有 Cloudflare 历史数据则作为访客参考，否则显示「未采集」。无 Cookie；按当日 IP + 浏览器特征的 HMAC 去重，不存原始 IP / UA，排除已识别机器人、后台、API 和静态文件。保留最近 90 天；这是估计访客数，不是精确人数。</div>
@@ -269,6 +285,25 @@ export async function handleAdminRequest(
       },
     });
   }
+  if (url.pathname === '/api/admin/realtime') {
+    try {
+      const data = realtimeJson(await loadRealtime(env.DB), dimensionLabel);
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify(data), {
+        headers: { ...secureHeaders, 'content-type': 'application/json; charset=utf-8' },
+      });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: 'admin_realtime_error',
+          message: error instanceof Error ? error.message : 'unknown',
+        }),
+      );
+      return new Response('{"error":"unavailable"}', {
+        status: 503,
+        headers: { ...secureHeaders, 'content-type': 'application/json; charset=utf-8' },
+      });
+    }
+  }
   if (!['/admin', '/admin/', '/api/admin/dashboard'].includes(url.pathname)) return html('Not found', 404);
   let range: ReturnType<typeof dateRange>;
   try {
@@ -282,7 +317,12 @@ export async function handleAdminRequest(
       return new Response(request.method === 'HEAD' ? null : JSON.stringify(data), {
         headers: { ...secureHeaders, 'content-type': 'application/json; charset=utf-8' },
       });
-    return html(request.method === 'HEAD' ? '' : renderDashboard(data));
+    if (request.method === 'HEAD') return html('');
+    const [realtime, charts] = await Promise.all([loadRealtime(env.DB), loadCharts(env.DB)]);
+    const nonce = newNonce();
+    return html(renderDashboard(data, { realtime, charts, nonce }), 200, {
+      'content-security-policy': dashboardCsp(nonce),
+    });
   } catch (error) {
     console.error(
       JSON.stringify({
