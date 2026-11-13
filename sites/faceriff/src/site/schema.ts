@@ -49,3 +49,13 @@ export const cloudflareDailyDimensions = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.dayUtc, table.dataset, table.dimension, table.value] })],
 );
+
+export const conversionEvents = sqliteTable('conversion_events', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  props: text('props').notNull().default('{}'),
+  dedupeKey: text('dedupe_key'),
+  createdAt: integer('created_at').notNull(),
+  day: text('day').notNull(),
+});
+

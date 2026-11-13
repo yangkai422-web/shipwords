@@ -8,6 +8,7 @@ import models from '../site.models';
 import { core } from './core.server';
 import { handleAdminRequest } from './lib/admin.server';
 import { handleAdminLogin } from './lib/admin-login.server';
+import { handleTrackRequest } from './lib/conversion-events';
 import { isVisitorRequest, recordVisitor } from './lib/visitors';
 import { refreshYirBalance } from './lib/yir-balance';
 
@@ -65,6 +66,8 @@ export default {
       return session ? { email: session.user.email, emailVerified: session.user.emailVerified } : null;
     });
     if (admin) return admin;
+    const tracked = await handleTrackRequest(request, env);
+    if (tracked) return tracked;
     // Rybbit stats go through /stats/ on this site and are forwarded to the collector here.
     const stats = await proxyRybbit(request, env.RYBBIT_UPSTREAM);
     if (stats) return stats;

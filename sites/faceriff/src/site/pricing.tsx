@@ -110,6 +110,7 @@ export function Plans({
       track('checkout_start', { product: productId, source });
       void checkout(productId, RESUME_PATH);
     };
+    if (source !== 'dialog') track('pay_panel_view', { source });
     if (session.data) start();
     else openSignIn(start, 'checkout');
   }
@@ -182,7 +183,10 @@ export function PricingDialog() {
   const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    const onOpen = () => dialog.current?.showModal();
+    const onOpen = () => {
+      dialog.current?.showModal();
+      track('pay_panel_view', { source: 'dialog' });
+    };
     window.addEventListener(OPEN_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_EVENT, onOpen);
   }, []);

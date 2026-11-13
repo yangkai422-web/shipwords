@@ -5,6 +5,7 @@ import type { ReviewInfo, ReviewNote } from '@shipwords/jobs/runner';
 import site from '../../site.config';
 import models from '../../site.models';
 import { type AdminEnv, type AdminUser, escapeHtml, secureHeaders, shanghaiTime } from './admin.server';
+import { recordConversionEvent } from './conversion-events';
 
 // Owner review queue (/admin/review): jobs the runner held in needs_review. Server-rendered, no scripts (CSP default-src 'none');
 // confirmations are a second page with a POST form, protected by the admin session plus a same-origin check.
@@ -286,6 +287,13 @@ export async function handleReviewRequest(
         : 'noop'
       : 'error';
     console.log(JSON.stringify({ event: 'admin_review_decision', jobId: id, action, outcome: done }));
+    if (result.ok && result.changed) {
+      await recordConversionEvent(env.DB, {
+        name: 'manual_review_submit',
+        props: { action, job: id },
+        dedupeKey: `${id}:${action}`,
+      });
+    }
     return new Response(null, {
       status: 303,
       headers: { ...secureHeaders, location: `/admin/review?done=${done}&job=${encodeURIComponent(id)}` },

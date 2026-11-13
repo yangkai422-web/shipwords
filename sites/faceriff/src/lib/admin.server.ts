@@ -7,6 +7,7 @@ import { LIVE_CSS, liveJson, loadLive, renderLive } from './admin-live';
 import { handleReviewRequest } from './admin-review';
 import { type Charts, loadCharts, loadRealtime, type Realtime } from './realtime';
 import { dimensionNames } from './visitor-dimensions';
+import { type ConversionSnapshot, loadConversionEvents, renderConversionEvents } from './conversion-events';
 import { type BalanceEnv, loadYirBalance } from './yir-balance';
 
 export interface AdminUser {
@@ -176,6 +177,7 @@ export interface LiveSections {
   charts: Charts;
   geo?: GeoData;
   live?: ReturnType<typeof liveJson>;
+  conversions?: ConversionSnapshot;
   /** Open the business-details section (after a date-range submit). */
   openBusiness?: boolean;
   nonce: string;
@@ -220,6 +222,7 @@ export function renderDashboard(data: Dashboard, live?: LiveSections): string {
       ? (live.live ? renderLive(live.live, live.nonce) : '') +
         `<details class="sec"><summary>实时访客详情（页面 / 国家 / 设备）</summary>${renderRealtime(live.realtime, dimensionLabel, live.nonce)}</details>` +
         `<details class="sec"><summary>趋势图表（48 小时 / 30 天）</summary>${renderCharts(live.charts, dimensionLabel)}</details>` +
+        (live.conversions ? renderConversionEvents(live.conversions) : '') +
         (
           live.geo
             ? `<details class="sec"><summary>本地化决策（国家 / 语言转化）</summary>${renderGeo(live.geo, (c) => dimensionLabel('country', c))}</details>`
@@ -369,17 +372,18 @@ export async function handleAdminRequest(
         headers: { ...secureHeaders, 'content-type': 'application/json; charset=utf-8' },
       });
     if (request.method === 'HEAD') return html('');
-    const [realtime, charts, geo, live, yir] = await Promise.all([
+    const [realtime, charts, geo, live, yir, conversions] = await Promise.all([
       loadRealtime(env.DB),
       loadCharts(env.DB),
       loadGeo(env.DB),
       loadLive(env.DB),
       safeBalance(env),
+      loadConversionEvents(env.DB),
     ]);
     const nonce = newNonce();
     const openBusiness = ['days', 'from', 'to'].some((k) => url.searchParams.has(k));
     return html(
-      renderDashboard(data, { realtime, charts, geo, live: liveJson(live, yir), openBusiness, nonce }),
+      renderDashboard(data, { realtime, charts, geo, live: liveJson(live, yir), conversions, openBusiness, nonce }),
       200,
       {
         'content-security-policy': dashboardCsp(nonce),

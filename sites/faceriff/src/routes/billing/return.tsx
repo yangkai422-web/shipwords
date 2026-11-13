@@ -35,6 +35,7 @@ function ReturnPage() {
         setState(status);
         // No order id in the event; refreshing the return page records it again for the same order. Low volume, so dedupe by visitor.
         track(status === 'paid' ? 'payment_confirmed' : 'payment_pending');
+        if (status === 'paid') track('pay_success', { order });
         if (status !== 'paid') return;
         void refresh();
         setTimeout(() => window.location.assign(next), CONTINUE_DELAY_MS);

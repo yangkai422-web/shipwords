@@ -14,6 +14,7 @@ let pending: (() => void) | null = null;
 export function openSignIn(then?: () => void, source = 'nav') {
   pending = then ?? null;
   track('sign_in_open', { source });
+  track('signin_open', { source });
   window.dispatchEvent(new Event(OPEN_EVENT));
 }
 

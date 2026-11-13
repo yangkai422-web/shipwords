@@ -2,6 +2,7 @@ import { pageHead } from '@shipwords/core/seo';
 import { useGeneration } from '@shipwords/jobs/react';
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
+import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
 import { BeforeYouPay, formatPrice, Plans, packName } from '~/site/pricing';
 import { ReturnNotice, TinyDeskTool } from '~/site/tool';
@@ -311,6 +312,9 @@ function HomePage() {
   const config = root.useLoaderData();
   const generation = useGeneration({ recaptchaSiteKey: config.recaptchaSiteKey });
   const [heroView, setHeroView] = useState<HeroView>('cats');
+  useEffect(() => {
+    track('home_view');
+  }, []);
   return (
     <>
       <section className="hero" id="make">

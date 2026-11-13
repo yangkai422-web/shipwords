@@ -175,14 +175,16 @@ describe('simplified dashboard layout', () => {
     expect(page).toContain('Yir 余额偏低');
     expect(page).toContain('id="k-yir">$3.10<');
     expect(page).not.toMatch(/<details[^>]*\sopen/);
-    for (const s of ['实时访客详情', '趋势图表', '本地化决策', '经营明细', '访客来源明细', '指标口径与限制'])
+    for (const s of ['实时访客详情', '趋势图表', '转化事件', '本地化决策', '经营明细', '访客来源明细', '指标口径与限制'])
       expect(page).toContain(`<summary>${s}`);
     expect(page).toContain('/api/admin/live');
-    // Auto-refresh every 2 hours (checked each minute and on tab return), never every 30 s.
+    // Auto-refresh every 2 hours while visible, pause when hidden, fetch immediately when the tab returns; never every 30 s.
     expect(page).not.toContain('30 秒');
     expect(page).not.toMatch(/,30000\)/);
-    expect(page.split('Date.now()-last>=7200000').length - 1).toBe(2);
+    expect(page.split('setInterval(tick,7200000)').length - 1).toBe(2);
+    expect(page.split('document.hidden?stop():start(true)').length - 1).toBe(2);
     expect(page.split('每 2 小时自动刷新').length - 1).toBe(2);
+    expect(page).toContain('转化事件（今日');
     for (const script of page.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g) ?? [])
       expect(() => new Function(script.replace(/^<script[^>]*>|<\/script>$/g, ''))).not.toThrow();
     const ranged = await (

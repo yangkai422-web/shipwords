@@ -1,7 +1,7 @@
 // Owner dashboard: realtime visitors and plain-SVG charts (no chart library, no external requests).
 import { type Charts, HOUR, type Realtime } from './realtime';
 
-/** Auto-refresh of the admin live/realtime blocks; a manual page reload is always fresh (no-store). */
+/** Auto-refresh of the admin live/realtime blocks while the tab is visible; paused when hidden; a manual page reload is always fresh (no-store). */
 export const AUTO_REFRESH_MS = 2 * 60 * 60_000;
 export const AUTO_REFRESH_TEXT = '每 2 小时自动刷新 · 手动刷新页面立即更新';
 
@@ -229,7 +229,7 @@ let busy=false,last=Date.now();const tick=async()=>{if(busy)return;busy=true;las
 $('rt-online5').textContent=d.online5;$('rt-online30').textContent=d.online30;$('rt-pm').textContent=d.perMinute;$('rt-views30').textContent=d.views30;$('rt-updated').textContent=d.updated;
 fill('rt-pages',d.pages,['label','active5','visitors','views']);fill('rt-countries',d.countries,['label','visitors']);fill('rt-devices',d.devices,['label','visitors']);spark(d.series);$('rt-status').textContent=''}
 catch(e){$('rt-status').textContent=' · 刷新失败（'+(e&&e.message==='404'?'登录可能已过期，请刷新页面':'稍后自动重试')+'）'}finally{busy=false}};
-addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.sv').forEach((e)=>{e.scrollLeft=e.scrollWidth}));const due=()=>Date.now()-last>=${AUTO_REFRESH_MS};setInterval(()=>{if(!document.hidden&&due())tick()},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden&&due())tick()});})();`;
+addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.sv').forEach((e)=>{e.scrollLeft=e.scrollWidth}));let timer=null;const stop=()=>{if(timer){clearInterval(timer);timer=null}};const start=(immediate)=>{stop();if(immediate)tick();timer=setInterval(tick,${AUTO_REFRESH_MS})};document.addEventListener('visibilitychange',()=>{document.hidden?stop():start(true)});if(!document.hidden)start(false);})();`;
 
 export function renderCharts(c: Charts, label: Label): string {
   const hourLabels = c.hourly.map((h) => `${String((h.hour + 8) % 24).padStart(2, '0')}时`);

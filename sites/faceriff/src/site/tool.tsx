@@ -238,13 +238,19 @@ export function TinyDeskTool({
       if (before !== 'queued' && before !== 'submitted') continue;
       const seconds = job.finishedAt ? Math.round((job.finishedAt - job.createdAt) / 1000) : 0;
       if (job.status === 'succeeded') track('video_ready', { seconds });
-      else if (job.status === 'failed' || job.status === 'canceled')
+      else if (job.status === 'failed' || job.status === 'canceled') {
         track('video_failed', { status: job.status });
+        track('gen_fail', { reason: job.status, job: job.id });
+      }
     }
   }, [jobs]);
 
   useEffect(() => {
-    if (error) track('generate_failed', { code: error.code ?? 'unknown' });
+    if (error) {
+      const reason = error.code ?? 'unknown';
+      track('generate_failed', { code: reason });
+      track('gen_fail', { reason });
+    }
   }, [error]);
 
   function changePhotos(update: (current: Record<string, string>) => Record<string, string>) {
@@ -292,6 +298,7 @@ export function TinyDeskTool({
       changePhotos((current) => ({ ...current, [slotId]: path }));
       setHighlight((current) => current.filter((id) => id !== slotId));
       track('photo_added', { slot: slotId, via });
+      track('upload_photo', { slot: slotId, via });
     } catch (e) {
       track('photo_upload_failed', { via });
       setUploadError(e instanceof Error ? e.message : m.common_tool_upload_failed());
@@ -310,7 +317,10 @@ export function TinyDeskTool({
     photosRef.current = { ...current, ...placed };
     changePhotos((latest) => ({ ...latest, ...placed }));
     setHighlight((list) => list.filter((id) => !ids.includes(id)));
-    for (const id of ids) track('photo_added', { slot: id, via: 'phone' });
+    for (const id of ids) {
+      track('photo_added', { slot: id, via: 'phone' });
+      track('upload_photo', { slot: id, via: 'phone' });
+    }
     return ids.length;
   }
 
@@ -448,6 +458,7 @@ export function TinyDeskTool({
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     // blocked records which step this click stopped at; none means generation starts.
+    track('render_click', { faces: own.length });
     const click = (blocked: string) => track('generate_click', { faces: own.length, blocked });
     // The button stays enabled: with no photo of your own (all dogs or all empty) it opens the lead's picker, without consent it asks to tick it, rather than looking disabled.
     if (own.length === 0) {

@@ -10,6 +10,7 @@ export function isVisitorRequest(request: Request, response: Response): boolean 
     request.method === 'GET' &&
     response.status === 200 &&
     (response.headers.get('content-type') ?? '').includes('text/html') &&
+    // /admin, /admin/*, /api, /api/admin and other non-document paths never count toward UV, pageviews, or realtime online users.
     !/^\/(api|admin|stats|files|assets|__)(\/|$)/.test(path) &&
     !/\.[a-z0-9]{1,8}$/i.test(path) &&
     !!request.headers.get('cf-connecting-ip') &&
