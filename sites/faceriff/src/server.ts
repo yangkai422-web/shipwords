@@ -10,6 +10,7 @@ import { handleAdminRequest } from './lib/admin.server';
 import { handleAdminLogin } from './lib/admin-login.server';
 import { handleTrackRequest } from './lib/conversion-events';
 import { isVisitorRequest, recordVisitor } from './lib/visitors';
+import { refreshCleanVisits } from './lib/cf-clean-visits';
 import { refreshYirBalance } from './lib/yir-balance';
 
 // Worker entry: pages and API go to TanStack Start, plus the Workflow class for generation jobs and the compose container.
@@ -61,10 +62,15 @@ export default {
     const adminLogin = await handleAdminLogin(request, env, (authRequest) => core.handleAuth(authRequest));
     if (adminLogin) return adminLogin;
     // Authorization happens in the Worker before any HTML or JSON can be sent.
-    const admin = await handleAdminRequest(request, env, async (req) => {
-      const session = await core.auth.api.getSession({ headers: req.headers });
-      return session ? { email: session.user.email, emailVerified: session.user.emailVerified } : null;
-    });
+    const admin = await handleAdminRequest(
+      request,
+      env,
+      async (req) => {
+        const session = await core.auth.api.getSession({ headers: req.headers });
+        return session ? { email: session.user.email, emailVerified: session.user.emailVerified } : null;
+      },
+      ctx,
+    );
     if (admin) return admin;
     const tracked = await handleTrackRequest(request, env);
     if (tracked) return tracked;
@@ -84,8 +90,13 @@ export default {
     }
     return response;
   },
-  // Cron (wrangler.jsonc triggers): keep the Yir balance snapshot fresh for the dashboard even when nobody has it open.
+  // Cron (wrangler.jsonc triggers): keep Yir balance and clean-visit snapshots fresh even when nobody has the dashboard open.
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(refreshYirBalance(env, { maxAge: 60_000 }).then(() => undefined));
+    ctx.waitUntil(
+      Promise.all([
+        refreshYirBalance(env, { maxAge: 60_000 }),
+        refreshCleanVisits(env, { maxAge: 60_000 }),
+      ]).then(() => undefined),
+    );
   },
 } satisfies ExportedHandler<Env>;

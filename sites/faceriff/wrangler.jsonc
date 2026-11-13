@@ -7,7 +7,7 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // Every 15 minutes: refresh the Yir balance snapshot for the owner dashboard (one GET /v1/balance + one D1 write).
+  // Every 15 minutes: refresh Yir balance and the FaceRiff clean-visit snapshot (GraphQL + D1 writes).
   "triggers": { "crons": ["*/15 * * * *"] },
   "upload_source_maps": true,
   // Add your domain before deploying: "routes": [{ "pattern": "your-domain.com", "custom_domain": true }],
@@ -16,7 +16,9 @@
     // Rybbit collector URL, used only inside the Worker (/stats/* proxy); leave empty to disable.
     "RYBBIT_UPSTREAM": "",
     // Owner dashboard: warn when Yir available balance is below this (USD) or below 5 jobs' worth, whichever is higher.
-    "YIR_LOW_BALANCE_USD": "10"
+    "YIR_LOW_BALANCE_USD": "10",
+    // faceriff.com zone tag for the clean-visits GraphQL query (token is the Worker secret CF_ANALYTICS_TOKEN).
+    "CF_ZONE_TAG": "b24ec5ba31b1af31ad3afc70ae48e3f6"
   },
   "d1_databases": [
     {
@@ -36,7 +38,7 @@
     }
   ],
   // Effect compose container: ffmpeg image in packages/jobs/compose. Uses durable_object scheduling; the instance type
-  // (standard-3: 2 vCPU, 8 GiB; on standard-1's 1/2 vCPU the face check took 25â€?0 s and compose 60 s) is set in start() in server.ts.
+  // (standard-3: 2 vCPU, 8 GiB; on standard-1's 1/2 vCPU the face check took 25-30 s and compose 60 s) is set in start() in server.ts.
   "containers": [
     {
       "class_name": "ComposeContainer",

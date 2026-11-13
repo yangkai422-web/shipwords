@@ -55,6 +55,8 @@ beforeEach(async () => {
     'daily_visitor_dimensions',
     'cf_daily_dimensions',
     'cf_daily_traffic',
+    'cf_clean_visits',
+    'cf_clean_visit_window',
     'daily_visitors',
     'analytics_meta',
     'job_reviews',
@@ -363,7 +365,8 @@ describe('Cloudflare historical traffic', () => {
     expect(html).toContain('Cloudflare 统计（含部分机器人，按 UTC 日）');
     expect(html).toContain('11 月 10 日 08:00 至 11 月 11 日 08:00');
     expect(html).toContain('未结束日的截至抓取时快照');
-    expect(html).toContain('仅一次性补录，不会自动刷新');
+    expect(html).toContain('这是一次性未筛选补录，不会自动刷新');
+    expect(html).toContain('不是书签「FaceRiff 干净访客」的口径');
     expect(html).not.toContain('所有日期均为北京时间');
   });
   it('treats real zero counts as available and never substitutes CF for first-party zero', async () => {
@@ -730,5 +733,83 @@ describe('manual review queue', () => {
     const job = await env.DB.prepare("SELECT status,error_code FROM jobs WHERE id='job_held'").first();
     expect(job).toMatchObject({ status: 'failed', error_code: 'review_grey_reviewed' });
     expect((await loadDashboard(env.DB, range())).held).toHaveLength(0);
+  });
+});
+
+describe('bookmark-aligned clean visits on the dashboard', () => {
+  const fetchedAt = Date.parse('2026-11-13T05:15:00Z');
+  async function seed() {
+    await sql(
+      "INSERT INTO cf_daily_traffic(day_utc,uniques,page_views,requests,fetched_at,is_partial) VALUES ('2026-11-10',344,259,1623,?,0),('2026-11-11',153,211,1158,?,1)",
+      now,
+      now,
+    );
+    await sql(
+      "INSERT INTO cf_clean_visits(day_utc,visits,requests,bytes,fetched_at,is_partial) VALUES ('2026-11-10',80,300,1000,?,0),('2026-11-11',120,400,2000,?,1)",
+      fetchedAt,
+      fetchedAt,
+    );
+    await sql(
+      "INSERT INTO cf_clean_visit_window(id,visits,requests,bytes,window_start,window_end,fetched_at,last_error,last_attempt_at) VALUES ('last_24h',203,775,9000,?,?,?,NULL,?)",
+      fetchedAt - 86_400_000,
+      fetchedAt,
+      fetchedAt,
+      fetchedAt,
+    );
+  }
+
+  it('shows the rolling 24h bookmark visits without mixing them into visitorReference or unfiltered history', async () => {
+    await seed();
+    const d = await loadDashboard(env.DB, range());
+    expect(d.cleanWindow).toMatchObject({ visits: 203, requests: 775, fetchedAt, lastError: null });
+    expect(d.daily.find((r) => r.day === '2026-11-10')).toMatchObject({
+      cleanVisits: 80,
+      cleanRequests: 300,
+      cfVisitors: 344,
+    });
+    expect(d.totals).toMatchObject({ cleanVisits: 200, cleanRequests: 700, cfVisitors: 497 });
+    expect(visitorReference(d.daily.find((r) => r.day === '2026-11-10')!)).toEqual({
+      value: 344,
+      source: 'cloudflare',
+      timeZone: 'UTC',
+    });
+    const unfiltered = await env.DB.prepare(
+      "SELECT uniques,page_views,requests FROM cf_daily_traffic WHERE day_utc='2026-11-10'",
+    ).first();
+    expect(unfiltered).toEqual({ uniques: 344, page_views: 259, requests: 1623 });
+    const html = renderDashboard(d);
+    expect(html).toContain('干净访客 · 最近 24 小时');
+    expect(html).toContain('>203<');
+    expect(html).toContain('同期请求 775 次');
+    expect(html).toContain('FaceRiff 干净访客');
+    expect(html).toContain('排除 /api/admin、/sitemap.xml、/robots.txt、Curl、ChromeHeadless');
+    expect(html).toContain('2026/11/13 13:15:00');
+    expect(html).toContain('Asia/Shanghai');
+    expect(html).toContain('仍不排除 /admin 和 Unknown 浏览器');
+    expect(html).toContain('会高于 Web Analytics');
+    expect(html).toContain('干净访客合计 · UTC 日');
+    expect(html).toContain('CF 历史 UV 合计 · UTC（未筛选）');
+    expect(html).toContain('CF 历史 UV · UTC（未筛选）');
+  });
+
+  it('keeps the last snapshot and sync time when a later fetch fails', async () => {
+    await seed();
+    await sql(
+      "UPDATE cf_clean_visit_window SET last_error='timeout', last_attempt_at=? WHERE id='last_24h'",
+      fetchedAt + 60_000,
+    );
+    const html = renderDashboard(await loadDashboard(env.DB, range()));
+    expect(html).toContain('>203<');
+    expect(html).toContain('2026/11/13 13:15:00');
+    expect(html).toContain('同步超时');
+  });
+
+  it('does not blank /api/admin/dashboard when the analytics token is missing', async () => {
+    await seed();
+    const r = await handleAdminRequest(req('/api/admin/dashboard'), adminEnv, async () => owner);
+    expect(r?.status).toBe(200);
+    const body = (await r!.json()) as { cleanWindow: { visits: number }; totals: { cfVisitors: number } };
+    expect(body.cleanWindow.visits).toBe(203);
+    expect(body.totals.cfVisitors).toBe(497);
   });
 });

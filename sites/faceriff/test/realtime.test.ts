@@ -38,6 +38,7 @@ beforeEach(async () => {
     'daily_visitor_dimensions',
     'daily_visitors',
     'cf_daily_traffic',
+    'cf_clean_visits',
     'analytics_meta',
     'orders',
     'jobs',
@@ -165,7 +166,7 @@ describe('admin realtime endpoint and charts page', () => {
       '最后更新',
       '最近 48 小时',
       '最近 30 天',
-      'Cloudflare UV · UTC',
+      'CF 历史 UV · UTC（未筛选）',
       '待审核',
       '设备',
       '来源平台',
@@ -189,6 +190,9 @@ describe('chart data', () => {
     await sql("INSERT INTO daily_pageviews(day,views) VALUES ('2026-11-11',7)");
     await sql(
       "INSERT INTO cf_daily_traffic(day_utc,uniques,page_views,requests,fetched_at,is_partial) VALUES ('2026-11-01',40,90,900,1,0)",
+    );
+    await sql(
+      "INSERT INTO cf_clean_visits(day_utc,visits,requests,bytes,fetched_at,is_partial) VALUES ('2026-11-01',25,70,800,1,0)",
     );
     await sql(
       "INSERT INTO user(id,name,email,email_verified,created_at) VALUES ('u','C','c@example.com',1,?)",
@@ -232,6 +236,8 @@ describe('chart data', () => {
       views: null,
       cfVisitors: 40,
       cfViews: 90,
+      cleanVisits: 25,
+      cleanRequests: 70,
     });
   });
   it('draws gaps for missing values and escapes labels', () => {

@@ -250,7 +250,7 @@ export function renderCharts(c: Charts, label: Label): string {
     hourTitles,
   );
   return `<section id="charts"><h2>趋势图表</h2>
-  <div class="notice">实线 = 第一方统计（北京时间日 / 小时，排除机器人、后台和 API）；虚线 = Cloudflare 历史导入（UTC 日，全站 zone，含部分机器人和静态请求）。两种来源口径不同，不相加。缺失的时段留空，不画成 0。小时图从实时统计开始（${c.realtimeStartedAt ? esc(clock(c.realtimeStartedAt)) : '尚未开始'}）之后才有数据，保留 48 小时；第一方浏览量同样从这次部署后开始。</div>
+  <div class="notice">实线第一方 = 北京时间日 / 小时，排除机器人、后台和 API。实线干净访客 / 干净请求 = 与书签「FaceRiff 干净访客」同一筛选，按 UTC 日。虚线 = 未筛选的 Cloudflare 历史导入（UTC 日，全站 zone，含部分机器人和静态请求），不是书签口径。各来源不相加。缺失的时段留空，不画成 0。小时图从实时统计开始（${c.realtimeStartedAt ? esc(clock(c.realtimeStartedAt)) : '尚未开始'}）之后才有数据，保留 48 小时；第一方浏览量同样从这次部署后开始。</div>
   <div class="charts">${hourly}
   ${lineChart(
     `最近 30 天 · 每日访客 / 浏览量（${c.fromDay} 至 ${c.toDay}）`,
@@ -258,13 +258,15 @@ export function renderCharts(c: Charts, label: Label): string {
     [
       { name: '第一方访客 UV · 北京时间', color: '#ff4d6d', values: c.daily.map((d) => d.visitors) },
       { name: '第一方浏览量 PV · 北京时间', color: '#4cc9f0', values: c.daily.map((d) => d.views) },
+      { name: '干净访客 · UTC', color: '#c6f432', values: c.daily.map((d) => d.cleanVisits) },
+      { name: '干净请求 · UTC', color: '#80ed99', values: c.daily.map((d) => d.cleanRequests) },
       {
-        name: 'Cloudflare UV · UTC',
+        name: 'CF 历史 UV · UTC（未筛选）',
         color: '#ffb703',
         values: c.daily.map((d) => d.cfVisitors),
         dashed: true,
       },
-      { name: 'Cloudflare PV · UTC', color: '#b388ff', values: c.daily.map((d) => d.cfViews), dashed: true },
+      { name: 'CF 历史 PV · UTC（未筛选）', color: '#b388ff', values: c.daily.map((d) => d.cfViews), dashed: true },
     ],
     5,
   )}
@@ -283,10 +285,10 @@ export function renderCharts(c: Charts, label: Label): string {
   )}</div>
   <h3>访客构成 · 最近 30 天第一方（每日首访 UV，北京时间）</h3>
   <div class="charts small">${donut('设备', dims('device'), 'UV')}${shareBars('国家 / 地区', dims('country'), 'UV')}${shareBars('操作系统', dims('os'), 'UV')}${shareBars('浏览器', dims('browser'), 'UV')}${shareBars('来源平台（Referer）', dims('referrer'), 'UV')}</div>
-  <details><summary>图表数据（逐日数字）</summary><div class="scroll"><table><thead><tr><th>日期</th><th>第一方 UV</th><th>第一方 PV</th><th>CF UV · UTC</th><th>CF PV · UTC</th><th>订单</th><th>付款订单</th><th>成功</th><th>待审核</th><th>失败</th></tr></thead><tbody>${c.daily
+  <details><summary>图表数据（逐日数字）</summary><div class="scroll"><table><thead><tr><th>日期</th><th>第一方 UV</th><th>第一方 PV</th><th>干净访客 · UTC</th><th>干净请求 · UTC</th><th>CF 历史 UV · UTC（未筛选）</th><th>CF 历史 PV · UTC（未筛选）</th><th>订单</th><th>付款订单</th><th>成功</th><th>待审核</th><th>失败</th></tr></thead><tbody>${c.daily
     .map(
       (d) =>
-        `<tr>${[d.day, d.visitors ?? '未采集', d.views ?? '未采集', d.cfVisitors ?? '—', d.cfViews ?? '—', d.orders, d.paidOrders, d.succeeded, d.review, d.failed].map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`,
+        `<tr>${[d.day, d.visitors ?? '未采集', d.views ?? '未采集', d.cleanVisits ?? '—', d.cleanRequests ?? '—', d.cfVisitors ?? '—', d.cfViews ?? '—', d.orders, d.paidOrders, d.succeeded, d.review, d.failed].map((v) => `<td>${esc(v)}</td>`).join('')}</tr>`,
     )
     .join('')}</tbody></table></div></details></section>`;
 }

@@ -25,6 +25,27 @@ export const cloudflareDailyTraffic = sqliteTable('cf_daily_traffic', {
   isPartial: integer('is_partial', { mode: 'boolean' }).notNull().default(false),
 });
 
+// Bookmark-aligned Adaptive visits. UTC days; never overwrite cf_daily_traffic with these.
+export const cloudflareCleanVisits = sqliteTable('cf_clean_visits', {
+  dayUtc: text('day_utc').primaryKey(),
+  visits: integer('visits').notNull(),
+  requests: integer('requests').notNull(),
+  bytes: integer('bytes').notNull(),
+  fetchedAt: integer('fetched_at').notNull(),
+  isPartial: integer('is_partial', { mode: 'boolean' }).notNull().default(false),
+});
+export const cloudflareCleanVisitWindow = sqliteTable('cf_clean_visit_window', {
+  id: text('id').primaryKey(),
+  visits: integer('visits'),
+  requests: integer('requests'),
+  bytes: integer('bytes'),
+  windowStart: integer('window_start'),
+  windowEnd: integer('window_end'),
+  fetchedAt: integer('fetched_at'),
+  lastError: text('last_error'),
+  lastAttemptAt: integer('last_attempt_at').notNull(),
+});
+
 // Marginal counts only: no dimension is attached to an individual daily pseudonym.
 export const dailyVisitorDimensions = sqliteTable(
   'daily_visitor_dimensions',

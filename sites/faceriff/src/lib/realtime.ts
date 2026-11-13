@@ -149,6 +149,8 @@ export interface ChartDay {
   views: number | null;
   cfVisitors: number | null;
   cfViews: number | null;
+  cleanVisits: number | null;
+  cleanRequests: number | null;
   orders: number;
   paidOrders: number;
   succeeded: number;
@@ -175,7 +177,7 @@ export async function loadCharts(db: D1Database, now = Date.now()): Promise<Char
   const start = Date.parse(`${fromDay}T00:00:00+08:00`);
   const end = Date.parse(`${toDay}T00:00:00+08:00`) + DAY;
   const q = (sql: string, ...p: (string | number)[]) => db.prepare(sql).bind(...p);
-  const [meta, hourly, visitors, views, cf, jobs, orders, paid, dims] = await db.batch<
+  const [meta, hourly, visitors, views, cf, jobs, orders, paid, dims, clean] = await db.batch<
     Record<string, unknown>
   >([
     q("SELECT key,value FROM analytics_meta WHERE key IN ('tracking_started_at','realtime_started_at')"),
@@ -212,6 +214,11 @@ export async function loadCharts(db: D1Database, now = Date.now()): Promise<Char
       fromDay,
       toDay,
     ),
+    q(
+      'SELECT day_utc day,visits,requests FROM cf_clean_visits WHERE day_utc BETWEEN ? AND ?',
+      fromDay,
+      toDay,
+    ),
   ]);
   const metaMap = new Map((meta?.results ?? []).map((r) => [String(r.key), Number(r.value)]));
   const realtimeStartedAt = metaMap.get('realtime_started_at') ?? null;
@@ -222,6 +229,7 @@ export async function loadCharts(db: D1Database, now = Date.now()): Promise<Char
   const vis = byDay(visitors?.results);
   const pv = byDay(views?.results);
   const cfd = byDay(cf?.results);
+  const cld = byDay(clean?.results);
   const jd = byDay(jobs?.results);
   const od = byDay(orders?.results);
   const pd = byDay(paid?.results);
@@ -236,6 +244,8 @@ export async function loadCharts(db: D1Database, now = Date.now()): Promise<Char
       views: viewsTracked ? Number(pv.get(day)?.n ?? 0) : null,
       cfVisitors: cfd.has(day) ? Number(cfd.get(day)?.u) : null,
       cfViews: cfd.has(day) ? Number(cfd.get(day)?.v) : null,
+      cleanVisits: cld.has(day) ? Number(cld.get(day)?.visits) : null,
+      cleanRequests: cld.has(day) ? Number(cld.get(day)?.requests) : null,
       orders: Number(od.get(day)?.n ?? 0),
       paidOrders: Number(pd.get(day)?.n ?? 0),
       succeeded: Number(jd.get(day)?.succeeded ?? 0),

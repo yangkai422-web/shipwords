@@ -1,4 +1,5 @@
 import { loadDimensions, type TrafficDimensions } from './admin-dimensions';
+import type { CleanVisitWindow } from './cf-clean-visits';
 
 export const DAY = 86_400_000;
 export const YIR_ESTIMATE_USD = 2.7378;
@@ -33,6 +34,8 @@ export interface DailyRow {
   cfVisitors: number | null;
   cfPageViews: number | null;
   cfRequests: number | null;
+  cleanVisits: number | null;
+  cleanRequests: number | null;
   signups: number;
   orders: number;
   paidOrders: number;
@@ -106,6 +109,7 @@ export interface Dashboard {
   range: DateRange;
   trackingStartedAt: number | null;
   cfHistory: CloudflareHistory | null;
+  cleanWindow: CleanVisitWindow | null;
   dimensions: TrafficDimensions;
   daily: DailyRow[];
   totals: Omit<DailyRow, 'day'>;
@@ -217,6 +221,14 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       'SELECT min(day_utc) fromDay,max(day_utc) toDay,max(fetched_at) fetchedAt,group_concat(CASE WHEN is_partial=1 THEN day_utc END) partialDays FROM cf_daily_traffic',
     ),
     q("SELECT count(*) n FROM jobs WHERE status='needs_review'"),
+    q(
+      'SELECT day_utc day,visits cleanVisits,requests cleanRequests FROM cf_clean_visits WHERE day_utc BETWEEN ? AND ? ORDER BY day_utc',
+      range.from,
+      range.to,
+    ),
+    q(
+      "SELECT visits,requests,bytes,window_start,window_end,fetched_at,last_error,last_attempt_at FROM cf_clean_visit_window WHERE id='last_24h'",
+    ),
   ]);
   const rows = (index: number) => result[index]?.results ?? [];
   const started = rows(0)[0]?.value;
@@ -235,6 +247,8 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
       cfVisitors: null,
       cfPageViews: null,
       cfRequests: null,
+      cleanVisits: null,
+      cleanRequests: null,
       signups: 0,
       orders: 0,
       paidOrders: 0,
@@ -277,10 +291,34 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
           source: 'httpRequests1dGroups',
         }
       : null;
+  for (const values of rows(13)) {
+    const row = byDay.get(String(values.day));
+    if (row) Object.assign(row, values);
+  }
+  const windowRow = rows(14)[0];
+  const cleanWindow: CleanVisitWindow | null = windowRow
+    ? {
+        visits: windowRow.visits == null ? null : Number(windowRow.visits),
+        requests: windowRow.requests == null ? null : Number(windowRow.requests),
+        bytes: windowRow.bytes == null ? null : Number(windowRow.bytes),
+        windowStart: windowRow.window_start == null ? null : Number(windowRow.window_start),
+        windowEnd: windowRow.window_end == null ? null : Number(windowRow.window_end),
+        fetchedAt: windowRow.fetched_at == null ? null : Number(windowRow.fetched_at),
+        lastError: typeof windowRow.last_error === 'string' ? windowRow.last_error : null,
+        lastAttemptAt: windowRow.last_attempt_at == null ? null : Number(windowRow.last_attempt_at),
+      }
+    : null;
   for (const row of daily) row.margin = row.revenue - row.cashRefund - row.yirCost;
   const { day: _day, ...totals } = daily[0]!;
   for (const key of Object.keys(totals) as (keyof typeof totals)[]) {
-    if (key === 'visitors' || key === 'cfVisitors' || key === 'cfPageViews' || key === 'cfRequests')
+    if (
+      key === 'visitors' ||
+      key === 'cfVisitors' ||
+      key === 'cfPageViews' ||
+      key === 'cfRequests' ||
+      key === 'cleanVisits' ||
+      key === 'cleanRequests'
+    )
       totals[key] = daily.every((d) => d[key] == null)
         ? null
         : daily.reduce((sum, d) => sum + (d[key] ?? 0), 0);
@@ -290,6 +328,7 @@ export async function loadDashboard(db: D1Database, range: DateRange): Promise<D
     range,
     trackingStartedAt,
     cfHistory,
+    cleanWindow,
     dimensions: await loadDimensions(db, range),
     daily: daily.reverse(),
     totals,

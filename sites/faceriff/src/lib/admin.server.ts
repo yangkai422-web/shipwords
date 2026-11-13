@@ -1,6 +1,7 @@
 import { isAllowlistedEmail } from './admin-access';
 import { CHART_CSS, realtimeJson, renderCharts, renderRealtime } from './admin-charts';
 import { type Dashboard, dateRange, loadDashboard, visitorReference } from './admin-data';
+import { maybeRefreshCleanVisits } from './cf-clean-visits';
 import type { DimensionCount, TrafficDimensions } from './admin-dimensions';
 import { type GeoData, languageLabel, loadGeo, renderGeo } from './admin-geo';
 import { LIVE_CSS, liveJson, loadLive, renderLive } from './admin-live';
@@ -25,6 +26,8 @@ export interface AdminEnv {
   YIR_API_KEY?: string;
   YIR_BASE_URL?: string;
   YIR_LOW_BALANCE_USD?: string;
+  CF_ANALYTICS_TOKEN?: string;
+  CF_ZONE_TAG?: string;
 }
 export type GetAdminUser = (request: Request) => Promise<AdminUser | null>;
 export function isAdmin(user: AdminUser | null, allowlist: string | undefined): boolean {
@@ -182,28 +185,54 @@ export interface LiveSections {
   openBusiness?: boolean;
   nonce: string;
 }
+function cleanSyncNote(data: Dashboard): string {
+  const w = data.cleanWindow;
+  if (!w) return '尚未同步。打开本页或等待约 15 分钟的定时任务后，会按书签同一口径拉取。';
+  const synced = w.fetchedAt != null ? `上次成功同步 ${time(w.fetchedAt)}（Asia/Shanghai）` : '还没有成功同步';
+  if (!w.lastError) return synced;
+  const failed = w.lastAttemptAt != null ? time(w.lastAttemptAt) : '刚刚';
+  const reason =
+    w.lastError === 'not_configured' || w.lastError === 'token_invalid'
+      ? '分析令牌未配置或无效，已跳过同步'
+      : w.lastError === 'timeout'
+        ? '同步超时'
+        : '同步失败，稍后会自动重试';
+  return `${synced}；最近一次尝试 ${failed} ${reason}。`;
+}
+
 export function renderDashboard(data: Dashboard, live?: LiveSections): string {
   const { totals: t, range: r } = data;
+  const w = data.cleanWindow;
   const kpis = [
+    [
+      '干净访客合计 · UTC 日',
+      t.cleanVisits == null ? '尚未同步' : t.cleanVisits,
+      '与书签同一筛选；每日 visits 相加，不是跨日去重',
+    ],
+    [
+      '干净请求合计 · UTC 日',
+      t.cleanRequests == null ? '尚未同步' : t.cleanRequests,
+      'httpRequestsAdaptiveGroups 的 count；与书签请求量同一口径',
+    ],
     [
       '第一方每日访客合计 · UTC+8',
       t.visitors == null ? '未采集' : t.visitors,
       '仅第一方数据；每日去重数相加，不是跨日独立人数',
     ],
     [
-      'CF 每日 UV 合计 · UTC',
+      'CF 历史 UV 合计 · UTC（未筛选）',
       t.cfVisitors == null ? '未导入' : t.cfVisitors,
-      '按 UTC 日 UV 相加，非跨日去重；不与第一方相加',
+      '一次性未筛选导入；按 UTC 日 UV 相加，非跨日去重；不是书签口径',
     ],
     [
-      'CF 浏览量 PV · UTC',
+      'CF 历史浏览量 PV · UTC（未筛选）',
       t.cfPageViews == null ? '未导入' : t.cfPageViews,
-      'Cloudflare HTML 页面浏览量；历史快照',
+      'Cloudflare HTML 页面浏览量；历史未筛选快照，不会自动刷新',
     ],
     [
-      'CF 请求量 · UTC',
+      'CF 历史请求量 · UTC（未筛选）',
       t.cfRequests == null ? '未导入' : t.cfRequests,
-      '包含静态文件、API 等请求，不是访客人数',
+      '包含静态文件、API 等请求，不是访客人数，也不是书签口径',
     ],
     ['新注册', t.signups, 'user.created_at'],
     ['已付款订单 (USD)', t.paidOrders, `${t.orders} 笔创建订单，含未付款`],
@@ -214,9 +243,11 @@ export function renderDashboard(data: Dashboard, live?: LiveSections): string {
     ['估算差额*', money(t.margin), '收款 − 现金退款 − Yir 成本；不等于利润'],
   ];
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>FaceRiff · 经营后台</title><style>
-  *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef0ff;font:14px/1.65 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px 24px}a{color:#ff839a}h1{font-size:30px;margin:0}h2{font-size:20px;margin:30px 0 10px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.tag{color:#c6f432;font-size:12px;letter-spacing:2px}p,.muted{color:#aeb5d4}.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0}input,button,.pill{background:#151b33;border:1px solid #eef0ff30;color:#eef0ff;border-radius:8px;padding:9px 12px}button{background:#ff4d6d;color:#fff;cursor:pointer}.pill{text-decoration:none}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:#151b33;border:1px solid #eef0ff1f;border-radius:14px;padding:18px}.value{font:700 30px/1.4 ui-monospace,monospace;margin:6px 0}.card small{color:#aeb5d4}.notice{border-left:3px solid #c6f432;background:#151b33;padding:12px 16px;margin:18px 0}.scroll{overflow:auto;border:1px solid #eef0ff22;border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;background:#10162a}th,td{padding:12px;text-align:left;border-bottom:1px solid #eef0ff16;font-variant-numeric:tabular-nums}th{color:#c9cde8;background:#151b33;position:sticky;top:0}tbody tr:hover{background:#151b33}.badge{padding:3px 8px;border-radius:6px;background:#3b3450;color:#ffe5a1}.good{background:#263c2c;color:#c6f432}.bad{background:#4c2435;color:#ff9aaf}details{background:#151b33;padding:16px;border-radius:12px;margin-top:20px}li{margin:7px 0}footer{margin:28px 0;color:#8f95b8}@media(max-width:900px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:20px 12px}}@media(max-width:480px){.cards{grid-template-columns:1fr}.top{display:block}}${CHART_CSS}${LIVE_CSS}
+  *{box-sizing:border-box}body{margin:0;background:#0b1020;color:#eef0ff;font:14px/1.65 system-ui,sans-serif}main{max-width:1600px;margin:auto;padding:32px 24px}a{color:#ff839a}h1{font-size:30px;margin:0}h2{font-size:20px;margin:30px 0 10px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px}.tag{color:#c6f432;font-size:12px;letter-spacing:2px}p,.muted{color:#aeb5d4}.filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0}input,button,.pill{background:#151b33;border:1px solid #eef0ff30;color:#eef0ff;border-radius:8px;padding:9px 12px}button{background:#ff4d6d;color:#fff;cursor:pointer}.pill{text-decoration:none}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:#151b33;border:1px solid #eef0ff1f;border-radius:14px;padding:18px}.value{font:700 30px/1.4 ui-monospace,monospace;margin:6px 0}.card small{color:#aeb5d4}.notice{border-left:3px solid #c6f432;background:#151b33;padding:12px 16px;margin:18px 0}.scroll{overflow:auto;border:1px solid #eef0ff22;border-radius:12px}table{width:100%;border-collapse:collapse;white-space:nowrap;background:#10162a}th,td{padding:12px;text-align:left;border-bottom:1px solid #eef0ff16;font-variant-numeric:tabular-nums}th{color:#c9cde8;background:#151b33;position:sticky;top:0}tbody tr:hover{background:#151b33}.badge{padding:3px 8px;border-radius:6px;background:#3b3450;color:#ffe5a1}.good{background:#263c2c;color:#c6f432}.bad{background:#4c2435;color:#ff9aaf}details{background:#151b33;padding:16px;border-radius:12px;margin-top:20px}li{margin:7px 0}footer{margin:28px 0;color:#8f95b8}@media(max-width:900px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:20px 12px}}@media(max-width:480px){.cards{grid-template-columns:1fr}.top{display:block}}.cards.featured{grid-template-columns:2fr 1fr;margin:20px 0 8px}.card.feature{border-color:#c6f43255}.card.feature .value{font-size:40px;color:#c6f432}${CHART_CSS}${LIVE_CSS}
   </style></head><body><main><header class="top"><div><div class="tag">FACERIFF · OWNER ONLY</div><h1>经营与交付后台</h1><div class="muted">只读 · Asia/Shanghai (UTC+8) · ${escapeHtml(time(Date.now()))}</div></div><nav class="filters"><a class="pill review-link" href="/admin/review">待审核任务 <span id="review-count" class="badge ${data.pendingReviews > 0 ? 'bad' : 'good'}">${data.pendingReviews}</span></a><a href="/">返回网站</a></nav></header>
   ${data.pendingReviews > 0 ? `<div class="notice">有 <strong>${data.pendingReviews}</strong> 个视频等待人工审核（客户积分已扣、尚未交付）。<a href="/admin/review">去审核</a></div>` : ''}
+  <div class="cards featured"><section class="card feature"><div>干净访客 · 最近 24 小时</div><div class="value">${escapeHtml(w?.visits == null ? '尚未同步' : w.visits)}</div><small>${escapeHtml(w?.requests == null ? '与 Cloudflare Requests 书签「FaceRiff 干净访客」同一口径' : `同期请求 ${w.requests} 次 · 与书签「FaceRiff 干净访客」同一口径`)}</small></section><section class="card"><div>干净请求 · 最近 24 小时</div><div class="value">${escapeHtml(w?.requests == null ? '尚未同步' : w.requests)}</div><small>httpRequestsAdaptiveGroups 的 count，不是页面浏览量</small></section></div>
+  <div class="notice">这是后台要对齐的真实 / 干净访客：滚动最近 24 小时的 Total visits，筛选与 Cloudflare Requests 书签「FaceRiff 干净访客」相同（排除 /api/admin、/sitemap.xml、/robots.txt、Curl、ChromeHeadless）。${escapeHtml(cleanSyncNote(data))} 约每 15 分钟自动同步；这五条筛选仍不排除 /admin 和 Unknown 浏览器，因此会高于 Web Analytics，不能当成同一指标。</div>
   ${
     live
       ? (live.live ? renderLive(live.live, live.nonce) : '') +
@@ -234,10 +265,10 @@ export function renderDashboard(data: Dashboard, live?: LiveSections): string {
   <form class="filters" method="get" action="/admin"><a class="pill" href="/admin?days=7">最近 7 天</a><a class="pill" href="/admin?days=30">最近 30 天</a><label>从 <input type="date" name="from" value="${r.from}" required></label><label>到 <input type="date" name="to" value="${r.to}" required></label><button type="submit">查看</button><span class="muted">最多 90 天 · 今天尚未结束</span></form>
   <div class="cards">${kpis.map(([label, value, note]) => `<section class="card"><div>${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div><small>${escapeHtml(note)}</small></section>`).join('')}</div>
   <div class="notice">第一方访客统计启用：${escapeHtml(time(data.trackingStartedAt))}（Asia/Shanghai）。启用当日只有部分时段；此前如有 Cloudflare 历史数据则作为访客参考，否则显示「未采集」。无 Cookie；按当日 IP + 浏览器特征的 HMAC 去重，不存原始 IP / UA，排除已识别机器人、后台、API 和静态文件。保留最近 90 天；这是估计访客数，不是精确人数。</div>
-  <div class="notice">Cloudflare 统计（含部分机器人，按 UTC 日）：${data.cfHistory ? `历史快照覆盖 ${escapeHtml(data.cfHistory.from)} 至 ${escapeHtml(data.cfHistory.to)}；抓取时间 ${escapeHtml(time(data.cfHistory.fetchedAt))}（Asia/Shanghai）。${data.cfHistory.partialDays.length ? ` UTC 日期 ${escapeHtml(data.cfHistory.partialDays.join('、'))} 为未结束日的截至抓取时快照。` : ''}` : '尚未导入。'} UTC 日期 11 月 10 日对应北京时间 11 月 10 日 08:00 至 11 月 11 日 08:00；未强行换算成北京时间日。CF 是全站 zone 汇总，可能含爬虫、威胁请求、后台和静态资源，其 UV 不等于真人数。CF UV 合计也是每日 UV 相加，不是整段时间的去重人数。两种口径不相加，也不能直接对齐订单计算转化率。仅一次性补录，不会自动刷新。</div>
+  <div class="notice">Cloudflare 统计（含部分机器人，按 UTC 日）：${data.cfHistory ? `历史快照覆盖 ${escapeHtml(data.cfHistory.from)} 至 ${escapeHtml(data.cfHistory.to)}；抓取时间 ${escapeHtml(time(data.cfHistory.fetchedAt))}（Asia/Shanghai）。${data.cfHistory.partialDays.length ? ` UTC 日期 ${escapeHtml(data.cfHistory.partialDays.join('、'))} 为未结束日的截至抓取时快照。` : ''}` : '尚未导入。'} UTC 日期 11 月 10 日对应北京时间 11 月 10 日 08:00 至 11 月 11 日 08:00；未强行换算成北京时间日。CF 是全站 zone 汇总，可能含爬虫、威胁请求、后台和静态资源，其 UV 不等于真人数。CF UV 合计也是每日 UV 相加，不是整段时间的去重人数。两种口径不相加，也不能直接对齐订单计算转化率。这是一次性未筛选补录，不会自动刷新，也不是书签「FaceRiff 干净访客」的口径。</div>
   ${data.otherCurrencies.length ? `<div class="notice">非 USD 收款未混入美元统计：${data.otherCurrencies.map((c) => `${escapeHtml(c.currency.toUpperCase())} ${escapeHtml(c.amount.toFixed(2))}（${c.orders} 笔）`).join('；')}</div>` : ''}
-  <h2>每日概览</h2><p>订单按创建日；收款按付款日；视频状态 / 成本 / 积分退回按任务创建日汇总，状态会随任务进展更新。注册、订单、任务按北京时间日；CF 列严格保留同名 UTC 日期。访客参考优先第一方，缺失时用 CF；各来源合计分开展示，CF 重叠日仅供参考。</p>
-  ${table(['日期', '访客参考', '访客来源 / 日界线', 'CF UV · UTC', 'CF PV · UTC', 'CF 请求 · UTC', '注册', '创建订单', '付款 USD', '收款 USD', '视频', '成功', '待复核', '失败', '取消', '进行中', '退积分任务', 'Yir 次数', 'Yir 成本*', '现金退款 USD†', '差额*'], data.daily.map((d) => cells([d.day, visitorReference(d).value ?? '未采集', d.visitors != null ? '第一方 · UTC+8' : d.cfVisitors != null ? 'Cloudflare · UTC' : '未采集', d.cfVisitors ?? '—', d.cfPageViews ?? '—', d.cfRequests ?? '—', d.signups, d.orders, d.paidOrders, money(d.revenue), d.jobs, d.succeeded, d.review, d.failed, d.canceled, d.active, d.creditRefunds, d.generations, money(d.yirCost), money(d.cashRefund), money(d.margin)])).join(''))}
+  <h2>每日概览</h2><p>订单按创建日；收款按付款日；视频状态 / 成本 / 积分退回按任务创建日汇总，状态会随任务进展更新。注册、订单、任务按北京时间日；干净访客与 CF 历史列严格保留同名 UTC 日期。访客参考仍优先第一方，缺失时用未筛选 CF 历史；不要把干净访客混进该参考列。各来源合计分开展示。</p>
+  ${table(['日期', '访客参考', '访客来源 / 日界线', '干净访客 · UTC', '干净请求 · UTC', 'CF 历史 UV · UTC（未筛选）', 'CF 历史 PV · UTC（未筛选）', 'CF 历史请求 · UTC（未筛选）', '注册', '创建订单', '付款 USD', '收款 USD', '视频', '成功', '待复核', '失败', '取消', '进行中', '退积分任务', 'Yir 次数', 'Yir 成本*', '现金退款 USD†', '差额*'], data.daily.map((d) => cells([d.day, visitorReference(d).value ?? '未采集', d.visitors != null ? '第一方 · UTC+8' : d.cfVisitors != null ? 'Cloudflare 历史 · UTC' : '未采集', d.cleanVisits ?? '—', d.cleanRequests ?? '—', d.cfVisitors ?? '—', d.cfPageViews ?? '—', d.cfRequests ?? '—', d.signups, d.orders, d.paidOrders, money(d.revenue), d.jobs, d.succeeded, d.review, d.failed, d.canceled, d.active, d.creditRefunds, d.generations, money(d.yirCost), money(d.cashRefund), money(d.margin)])).join(''))}
   <h2>当前受限账号 / 模板 (${data.held.length}${data.held.length === 100 ? '+' : ''})</h2><p>全时段未解除的质量重试限制（quality_review_required）。这里只展示，不解锁、不扣积分。</p>
   ${table(['客户', '模板', '受限任务数', '最早任务 · Asia/Shanghai'], data.held.map((h) => cells([h.email, h.modelId, h.jobs, time(h.since)])).join(''))}
   <h2>最近订单（最多 100 笔）</h2><p>同账号视频列仅统计所选日期范围内的任务，<strong>不是逐笔订单的对应关系</strong>：现有系统是先买积分再生成，任务没有 order_id。</p>
@@ -246,7 +277,7 @@ export function renderDashboard(data: Dashboard, live?: LiveSections): string {
   ${table(['任务', '客户', '模板', '结果', '错误码', '积分退回', '重试限制', '创建 · Asia/Shanghai', '完成 · Asia/Shanghai', '输出'], data.jobs.map((j) => `<tr><td>${escapeHtml(j.id)}</td><td>${escapeHtml(j.email)}</td><td>${escapeHtml(j.modelId)}</td><td>${status(j.status, j.status === 'succeeded' && j.errorCode === 'quality_review')}</td><td>${escapeHtml(j.errorCode ?? '—')}</td><td>${j.creditRefunded ? '已退' : '—'}</td><td>${j.held ? '受限' : '—'}</td><td>${escapeHtml(time(j.createdAt))}</td><td>${escapeHtml(time(j.finishedAt))}</td><td>${j.status === 'succeeded' && j.outputCount > 0 ? `<a href="/api/admin/output?job=${encodeURIComponent(j.id)}">下载成片</a>` : '—'}</td></tr>`).join(''))}
   </details>
   <details class="sec"><summary>访客来源明细（第一方 / Cloudflare）</summary>${renderDimensions(data.dimensions)}</details>
-  <details class="sec"><summary>指标口径与限制</summary><ul><li>新注册来自 user；订单 / 收款来自 orders；任务来自 jobs；积分退回来自 credit_ledger 中 refund:job:* 记录，失败与退积分会重叠。quality_review 是已交付但待人工复核，不重复计入正常成功。</li><li>† 现金退款来自 payments.amount_refunded，按原订单付款日归属，不是退款实际发生日；记录以支付系统已同步到 D1 的状态为准。订单状态不等同于退款状态。</li><li>* Yir 成本优先用 jobs.upstream_cost_usd；没有账单记录时，按实际记录的上游任务 ID 数 × $2.7378 估算（不计 skipped 段）。提交前失败不计生成次数；上游已受理但 ID 未落库的异常费用无法捕捉。</li><li>差额 = USD 收款 − 同订单累计现金退款 − Yir 成本。包含所选范围的所有任务（含测试 / 重试），不含 Cloudflare、支付手续费、税费等，不是财务利润，也不是逐订单毛利。</li><li>第一方访客合计是每日去重数之和；共享 IP + 相同浏览器可能少计，切换网络可能多计，机器人过滤不可能完全准确。仅统计成功的 HTML 文档请求；不额外记录站内 SPA 跳转。</li><li>客户邮箱只显示掩码；不展示上传照片、提示词或登录令牌。成片下载也会重新检查站主登录。</li></ul></details><footer>FaceRiff · 仅站主可见 · 只读运营数据</footer></main></body></html>`;
+  <details class="sec"><summary>指标口径与限制</summary><ul><li>新注册来自 user；订单 / 收款来自 orders；任务来自 jobs；积分退回来自 credit_ledger 中 refund:job:* 记录，失败与退积分会重叠。quality_review 是已交付但待人工复核，不重复计入正常成功。</li><li>† 现金退款来自 payments.amount_refunded，按原订单付款日归属，不是退款实际发生日；记录以支付系统已同步到 D1 的状态为准。订单状态不等同于退款状态。</li><li>* Yir 成本优先用 jobs.upstream_cost_usd；没有账单记录时，按实际记录的上游任务 ID 数 × $2.7378 估算（不计 skipped 段）。提交前失败不计生成次数；上游已受理但 ID 未落库的异常费用无法捕捉。</li><li>差额 = USD 收款 − 同订单累计现金退款 − Yir 成本。包含所选范围的所有任务（含测试 / 重试），不含 Cloudflare、支付手续费、税费等，不是财务利润，也不是逐订单毛利。</li><li>第一方访客合计是每日去重数之和；共享 IP + 相同浏览器可能少计，切换网络可能多计，机器人过滤不可能完全准确。仅统计成功的 HTML 文档请求；不额外记录站内 SPA 跳转。</li><li>干净访客与 Cloudflare Requests 书签「FaceRiff 干净访客」相同：排除路径中含 /api/admin、/sitemap.xml、/robots.txt，以及浏览器为 Curl、ChromeHeadless 的请求。滚动 24 小时用 sum.visits；按日合计是 UTC 日 visits 相加，不是跨日去重，也未换算成北京时间日。这五条筛选仍不排除 /admin 和 Unknown 浏览器，因此会高于 Web Analytics，不能当成同一指标。未筛选的 CF 历史 UV/PV/请求是另一次补录，不会被干净访客覆盖。</li><li>客户邮箱只显示掩码；不展示上传照片、提示词或登录令牌。成片下载也会重新检查站主登录。</li></ul></details><footer>FaceRiff · 仅站主可见 · 只读运营数据</footer></main></body></html>`;
 }
 
 /** Balance problems must never take the dashboard down. */
@@ -262,6 +293,7 @@ export async function handleAdminRequest(
   request: Request,
   env: AdminEnv,
   getUser: GetAdminUser,
+  ctx?: { waitUntil(promise: Promise<unknown>): void },
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (
@@ -366,6 +398,7 @@ export async function handleAdminRequest(
     return html('日期无效：结束日期不能晚于今天，范围最多 90 天。', 400);
   }
   try {
+    await maybeRefreshCleanVisits(env, { waitUntil: ctx?.waitUntil.bind(ctx) });
     const data = await loadDashboard(env.DB, range);
     if (url.pathname === '/api/admin/dashboard')
       return new Response(request.method === 'HEAD' ? null : JSON.stringify(data), {
