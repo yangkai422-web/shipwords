@@ -89,7 +89,7 @@ function savings(product: (typeof site.products)[number]) {
   return Math.round((1 - unit(product) / unit(base)) * 100);
 }
 
-/** Plan cards + buy buttons; signed-out visitors sign in first, then go straight to checkout. compact is for the dialog and skips the inclusions. */
+/** Plan cards + buy buttons. The Render button opens this dialog first; signed-out visitors still sign in when they click buy, because checkout in core requires a session. compact is for the dialog and skips the inclusions. */
 export function Plans({
   heading: Heading = 'h3',
   compact = false,

@@ -1,3 +1,4 @@
+import { useAccount } from '@shipwords/core/react/account';
 import { type PublicJob, uploadReference, type useGeneration } from '@shipwords/jobs/react';
 import { getRouteApi } from '@tanstack/react-router';
 import {
@@ -14,14 +15,16 @@ import { identify, track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
 import { openAccount } from '~/site/account';
 import { PhoneHandoff } from '~/site/phone-upload';
-import { formatPrice, PricingLink } from '~/site/pricing';
+import { assignOpenSeats, IMAGE_ACCEPT, isSupportedImage, prepareUploadImage } from '~/site/image';
+import { formatPrice, openPricing, PricingLink } from '~/site/pricing';
+import { decideRender } from '~/site/render-flow';
 import { openSignIn } from '~/site/sign-in';
 import site from '../../site.config';
 import models from '../../site.models';
 
 // The generator on the home page: a stage image with a round face slot on each of the 5 musicians. Click one to upload a photo.
 // The 5 slots start with 5 dogs (the same cast as the hero dog version; every competitor's sample is people, so dogs set us apart): click a dog to swap in your photo,
-// × on your photo puts the dog back, × on a dog keeps the original coach. At least 1 photo of your own; same price for 1–5 people. Sign in (Google One Tap), then buy credits; no free trial. Design: DESIGN.md "Upload area".
+// × on your photo puts the dog back, × on a dog keeps the original coach. At least 1 photo of your own; same price for 1–5 people. Render opens the pack dialog when you need to pay; already-signed-in users with credits generate immediately. Design: DESIGN.md "Upload area".
 
 const MODEL = models[0];
 const SLOTS = MODEL.effect?.slots ?? [];
@@ -103,17 +106,6 @@ const FILL_ORDER = ['lead', 'sax', 'keys', 'backLeft', 'backRight'];
 // Drag to move: it is a drag only after the pointer moves DRAG_START px, otherwise a click to pick a photo; it drops on a slot only within DROP_REACH radii of its center.
 const DRAG_START = 6;
 const DROP_REACH = 1.6;
-const ACCEPT = ['image/png', 'image/jpeg', 'image/webp'];
-const ACCEPT_ATTR = 'image/png,image/jpeg,image/jpg,image/webp,.png,.jpg,.jpeg,.webp';
-const HEIC_RE = /\.heic$|\.heif$/i;
-
-function isAcceptedImage(file: File) {
-  if (ACCEPT.includes(file.type)) return true;
-  // Some browsers (esp. iOS) leave type empty; allow by extension only for PNG/JPG/WebP.
-  const name = file.name || '';
-  if (HEIC_RE.test(name) || /image\/hei[cf]/i.test(file.type)) return false;
-  return /\.(png|jpe?g|webp)$/i.test(name) && (!file.type || file.type === 'application/octet-stream');
-}
 
 const root = getRouteApi('__root__');
 
@@ -164,6 +156,7 @@ export function TinyDeskTool({
   const config = root.useLoaderData();
   const auth = authClient(config.googleClientId);
   const session = auth.useSession();
+  const account = useAccount();
   const { jobs, generate, submitting, error } = generation;
   const [photos, setPhotos] = useState<Record<string, string>>(CATS);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -287,21 +280,23 @@ export function TinyDeskTool({
 
   async function onPick(slotId: string, file: File | undefined, via: 'picker' | 'drop') {
     if (!file) return;
-    if (!isAcceptedImage(file)) {
+    if (!isSupportedImage(file)) {
       setUploadError(m.common_tool_file_type());
       return;
     }
     setUploadError(null);
     setUploading(slotId);
     try {
-      const path = await uploadReference(file);
+      const prepared = await prepareUploadImage(file);
+      const path = await uploadReference(prepared);
       changePhotos((current) => ({ ...current, [slotId]: path }));
       setHighlight((current) => current.filter((id) => id !== slotId));
       track('photo_added', { slot: slotId, via });
       track('upload_photo', { slot: slotId, via });
     } catch (e) {
       track('photo_upload_failed', { via });
-      setUploadError(e instanceof Error ? e.message : m.common_tool_upload_failed());
+      const code = e instanceof Error ? e.message : '';
+      setUploadError(code === 'heic' || code === 'type' ? m.common_tool_file_type() : code || m.common_tool_upload_failed());
     } finally {
       setUploading(null);
     }
@@ -410,9 +405,28 @@ export function TinyDeskTool({
     setFileTarget(null);
     const target = fileSeat(event);
     if (!target || uploading) return;
-    const file = [...event.dataTransfer.files].find((f) => isAcceptedImage(f));
-    if (file) void onPick(target, file, 'drop');
-    else setUploadError(m.common_tool_file_type());
+    const files = [...event.dataTransfer.files].filter((f) => isSupportedImage(f));
+    if (!files.length) {
+      setUploadError(m.common_tool_file_type());
+      return;
+    }
+    void onPickMany(files, 'drop', target);
+  }
+
+  async function onPickMany(files: File[], via: 'picker' | 'drop', startSlot?: string) {
+    const current = photosRef.current;
+    const preferred = startSlot
+      ? [startSlot, ...FILL_ORDER.filter((id) => id !== startSlot)]
+      : [...highlightRef.current, ...FILL_ORDER.filter((id) => !highlightRef.current.includes(id))];
+    const empty = preferred.filter((id) => isOpen(current[id]) && SLOTS.some((slot) => slot.id === id));
+    const placements = assignOpenSeats(empty, files.filter(isSupportedImage));
+    if (!placements.length) {
+      setUploadError(m.common_tool_need_photo());
+      return;
+    }
+    for (const item of placements) {
+      await onPick(item.slotId, item.file, via);
+    }
   }
 
   function applyPreset(slotIds: string[]) {
@@ -460,30 +474,60 @@ export function TinyDeskTool({
     // blocked records which step this click stopped at; none means generation starts.
     track('render_click', { faces: own.length });
     const click = (blocked: string) => track('generate_click', { faces: own.length, blocked });
-    // The button stays enabled: with no photo of your own (all dogs or all empty) it opens the lead's picker, without consent it asks to tick it, rather than looking disabled.
-    if (own.length === 0) {
+    const credits = account.data ? account.data.balance.available : null;
+    let decision = decideRender({
+      ownPhotoCount: own.length,
+      consent,
+      rendering,
+      confirmAnother,
+      signedIn: Boolean(session.data),
+      accountLoading: account.loading,
+      availableCredits: credits,
+      costCredits: MODEL.credits,
+    });
+    if (decision === 'need_photo') {
       click('no_photo');
-      applyPreset(['lead']);
+      setUploadError(m.common_tool_need_photo());
       return;
     }
-    if (!consent) {
+    if (decision === 'need_consent') {
       click('no_consent');
       setNeedConsent(true);
       return;
     }
-    // Confirm before sign-in: if the session expires midway, resuming after sign-in must not skip the confirm and spend again.
-    if (rendering && !confirmAnother) {
+    // Confirm before payment or generate: if the session expires midway, resuming must not skip the confirm and spend again.
+    if (decision === 'confirm_another') {
       click('confirm_another');
       setConfirmAnother(true);
       return;
     }
     setConfirmAnother(false);
-    if (!session.data) {
-      click('sign_in');
-      // Sign in with a dialog in place, keeping the photos on the stage; generation continues after sign-in.
-      openSignIn(() => void start(), 'generate');
+    if (decision === 'wait_account') {
+      setPreparing(true);
+      try {
+        const response = await fetch('/api/billing/me');
+        const data = response.ok ? ((await response.json()) as { balance?: { available?: number } }) : null;
+        decision = decideRender({
+          ownPhotoCount: own.length,
+          consent,
+          rendering,
+          confirmAnother: true,
+          signedIn: Boolean(session.data),
+          accountLoading: false,
+          availableCredits: data?.balance?.available ?? null,
+          costCredits: MODEL.credits,
+        });
+      } finally {
+        setPreparing(false);
+      }
+    }
+    if (decision === 'open_pricing') {
+      click('pricing');
+      // Pack dialog first. Stage photos stay in sessionStorage through checkout.
+      openPricing('generate');
       return;
     }
+    if (decision !== 'start') return;
     click('none');
     await start();
   }
@@ -503,6 +547,21 @@ export function TinyDeskTool({
             {preset.label()}
           </button>
         ))}
+        <label className="preset preset-upload">
+          {m.common_tool_upload_many()}
+          <input
+            type="file"
+            accept={IMAGE_ACCEPT}
+            multiple
+            className="sr-only"
+            disabled={uploading !== null}
+            onChange={(e) => {
+              const files = e.target.files ? [...e.target.files] : [];
+              e.target.value = '';
+              if (files.length) void onPickMany(files, 'picker');
+            }}
+          />
+        </label>
       </div>
 
       <fieldset
@@ -564,10 +623,15 @@ export function TinyDeskTool({
                     else inputs.current.delete(slot.id);
                   }}
                   type="file"
-                  accept={ACCEPT_ATTR}
+                  accept={IMAGE_ACCEPT}
                   className="sr-only"
                   disabled={uploading !== null}
-                  onChange={(e) => void onPick(slot.id, e.target.files?.[0], 'picker')}
+                  onChange={(e) => {
+                    const files = e.target.files ? [...e.target.files] : [];
+                    e.target.value = '';
+                    if (files.length === 1) void onPick(slot.id, files[0], 'picker');
+                    else if (files.length > 1) void onPickMany(files, 'picker', slot.id);
+                  }}
                 />
               </label>
               <span className="member-name">{seat.short()}</span>
@@ -615,7 +679,7 @@ export function TinyDeskTool({
       </label>
 
       <div className="hero-actions">
-        <button type="submit" className="primary" disabled={submitting || preparing}>
+        <button type="submit" className="primary" disabled={submitting || preparing || own.length === 0}>
           {submitting || preparing ? (
             m.common_tool_starting()
           ) : (
@@ -629,6 +693,7 @@ export function TinyDeskTool({
       <p className="tool-hint mono">{m.common_tool_hint()}</p>
       {resumed && !error && jobs.length === 0 && <p className="notice">{m.common_tool_resumed()}</p>}
       {confirmAnother && <p className="notice">{m.common_tool_confirm_another({ price: PRICE })}</p>}
+      {own.length === 0 && <p className="notice">{m.common_tool_need_photo()}</p>}
       {uploadError && <p className="error">{uploadError}</p>}
       {error && <GenerationError code={error.code} message={error.message} />}
       {visibleJobs.length > 0 && (

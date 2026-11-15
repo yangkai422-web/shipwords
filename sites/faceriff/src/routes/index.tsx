@@ -1,14 +1,16 @@
 import { pageHead } from '@shipwords/core/seo';
 import { useGeneration } from '@shipwords/jobs/react';
 import { createFileRoute, getRouteApi, Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { getGenerationCount } from '~/lib/generation-stats';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
+import { ClickToPlayClip } from '~/site/clip';
 import { BeforeYouPay, formatPrice, Plans, packName } from '~/site/pricing';
 import { ReturnNotice, TinyDeskTool } from '~/site/tool';
 import site from '../../site.config';
 
-// Generator home page: face swap any of the 5 slots on stage, same price for 1–5 people. Sign in (Google One Tap), buy credits, then generate; no free trial.
+// Generator home page: face swap any of the 5 slots on stage, same price for 1–5 people. Render opens the packs; sign-in happens at checkout if needed. No free trial.
 // Upload and generation live in ~/site/tool; the whole clip is swapped in one pass, re-aligned to the original cuts with the song mixed back in, plus a silent copy.
 // The generator suggests friends, coworkers and teammates, never uploading celebrity photos.
 // Copy lives in messages/home; locale depends on the request, so the constants below hold message functions called at render.
@@ -101,6 +103,7 @@ const FAQ: { q: () => string; a: () => string }[] = [
 ];
 
 export const Route = createFileRoute('/')({
+  loader: () => getGenerationCount(),
   head: () =>
     pageHead(site, {
       title: m.home_title(),
@@ -142,114 +145,12 @@ export const Route = createFileRoute('/')({
   component: HomePage,
 });
 
-// Only one video plays sound at a time: unmuting a new one mutes the previous.
-let muteCurrent: (() => void) | null = null;
 
-// Video with original audio: muted autoplay by default; click the frame or the top-right toggle for sound.
-// Switching clips keeps the same video element: if sound is on it stays on and the new clip keeps playing.
-function SoundClip({ clip, tag, label }: { clip: string; tag: string; label: string }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const [muted, setMuted] = useState(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the src changes with clip; keep playing when sound is on
-  useEffect(() => {
-    const el = video.current;
-    if (el && !el.muted) void el.play().catch(() => undefined);
-  }, [clip]);
-  const mute = () => {
-    if (video.current) video.current.muted = true;
-    setMuted(true);
-  };
-  const toggle = () => {
-    const el = video.current;
-    if (!el) return;
-    if (!muted) {
-      mute();
-      muteCurrent = null;
-      return;
-    }
-    muteCurrent?.();
-    muteCurrent = mute;
-    el.muted = false;
-    void el.play();
-    setMuted(false);
-  };
-  return (
-    <div className="clip-frame">
-      <span className="poster-tag">{tag}</span>
-      <video
-        ref={video}
-        src={`/media/${clip}.mp4`}
-        poster={`/media/${clip}.jpg`}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        aria-label={label}
-        onClick={toggle}
-      />
-      <button
-        type="button"
-        className="sound-toggle"
-        onClick={toggle}
-        aria-pressed={!muted}
-        aria-label={muted ? m.home_sound_on() : m.home_sound_mute()}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M11 5 6 9H3v6h3l5 4z" />
-          {muted ? (
-            <path d="m16 9 5 6m0-6-5 6" />
-          ) : (
-            <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
-          )}
-        </svg>
-      </button>
-    </div>
-  );
-}
+// Real user quotes or social screenshots only. Leave empty until authentic material exists.
+const TESTIMONIALS: { quote: string; name: string; source?: string; image?: string }[] = [];
 
-// Shot-strip clips: phones wait until the strip is on screen before autoplaying (less decode work); desktop autoplays as before.
-function ShotClip({ clip, label }: { clip: string; label: string }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const [shouldPlay, setShouldPlay] = useState(false);
-  useEffect(() => {
-    const el = video.current;
-    if (!el) return;
-    const mobile = window.matchMedia('(max-width: 760px)').matches;
-    if (!mobile) {
-      setShouldPlay(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      ([entry]) => {
-          if (entry?.isIntersecting) {
-          setShouldPlay(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: '80px', threshold: 0.2 },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-  useEffect(() => {
-    const el = video.current;
-    if (!el || !shouldPlay) return;
-    void el.play().catch(() => undefined);
-  }, [shouldPlay]);
-  return (
-    <video
-      ref={video}
-      src={`/media/${clip}.mp4`}
-      poster={`/media/${clip}.jpg`}
-      autoPlay={shouldPlay}
-      muted
-      loop
-      playsInline
-      preload={shouldPlay ? 'metadata' : 'none'}
-      aria-label={label}
-    />
-  );
+function generatedLabel(count: number) {
+  return count === 1 ? m.home_generated_count_one() : m.home_generated_count({ count });
 }
 
 // Hero sample: single video window with three tabs (Cats / Knicks / Original), matching tinydeskai.io.
@@ -285,9 +186,9 @@ type HeroView = keyof typeof HERO_CLIPS;
 
 function HeroClip({ view, onPick }: { view: HeroView; onPick: (view: HeroView) => void }) {
   const shown = HERO_CLIPS[view];
-  // Prefetch posters so a tab switch does not flash black before the first frame.
+  // Prefetch WebP posters only (no mp4) so a tab switch does not flash black.
   useEffect(() => {
-    for (const { clip } of Object.values(HERO_CLIPS)) new Image().src = `/media/${clip}.jpg`;
+    for (const { clip } of Object.values(HERO_CLIPS)) new Image().src = `/media/${clip}.webp`;
   }, []);
   return (
     <figure className="sample-card">
@@ -298,7 +199,7 @@ function HeroClip({ view, onPick }: { view: HeroView; onPick: (view: HeroView) =
           </button>
         ))}
       </fieldset>
-      <SoundClip clip={shown.clip} tag={shown.tag()} label={shown.label()} />
+      <ClickToPlayClip clip={shown.clip} tag={shown.tag()} label={shown.label()} sound />
       <figcaption>
         <strong>{shown.hook()}</strong>
         <span className="mono">{shown.note()}</span>
@@ -310,6 +211,7 @@ const root = getRouteApi('__root__');
 
 function HomePage() {
   const config = root.useLoaderData();
+  const generatedCount = Route.useLoaderData();
   const generation = useGeneration({ recaptchaSiteKey: config.recaptchaSiteKey });
   const [heroView, setHeroView] = useState<HeroView>('cats');
   useEffect(() => {
@@ -323,6 +225,7 @@ function HomePage() {
           <p className="rec mono">{m.home_hero_rec()}</p>
           <h1>{m.home_hero_title()}</h1>
           <p className="lead">{m.home_hero_lead()}</p>
+          <p className="social-count mono">{generatedLabel(generatedCount)}</p>
           <p className="muted mono">{m.common_guide_updated({ date: m.home_updated_date() })}</p>
         </div>
         <HeroClip view={heroView} onPick={setHeroView} />
@@ -334,6 +237,24 @@ function HomePage() {
         </div>
       </section>
 
+      {TESTIMONIALS.length > 0 && (
+        <section className="band social-proof" id="proof">
+          <p className="social-count mono">{generatedLabel(generatedCount)}</p>
+          <ul className="testimonials">
+            {TESTIMONIALS.map((item) => (
+              <li key={`${item.name}-${item.quote.slice(0, 24)}`}>
+                {item.image ? <img src={item.image} alt="" /> : null}
+                <blockquote>{item.quote}</blockquote>
+                <p className="mono muted">
+                  {item.name}
+                  {item.source ? ` · ${item.source}` : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {VIRAL.length > 0 && (
       <section className="band" id="fyp">
         <p className="kicker">{m.home_fyp_kicker()}</p>
@@ -341,7 +262,7 @@ function HomePage() {
         <ul className="viral">
           {VIRAL.map((item) => (
             <li key={item.clip}>
-              <SoundClip clip={item.clip} tag={item.tag()} label={item.label()} />
+              <ClickToPlayClip clip={item.clip} tag={item.tag()} label={item.label()} sound />
               <strong>{item.hook()}</strong>
               <span className="mono muted">{item.note()}</span>
             </li>
@@ -368,7 +289,7 @@ function HomePage() {
         <ol className="shots">
           {SHOTS.map((shot) => (
             <li key={shot.time}>
-              <ShotClip clip={shot.clip} label={m.home_shot_label({ name: shot.name() })} />
+              <ClickToPlayClip clip={shot.clip} label={m.home_shot_label({ name: shot.name() })} />
               <span className="mono">{shot.time}</span>
               <strong>{shot.name()}</strong>
               <span className="muted">{shot.who()}</span>

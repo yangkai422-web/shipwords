@@ -40,7 +40,7 @@
   "home_step_cast_title": "Choose your seats",
   "home_step_cast_text": "Tap a seat on the stage and upload a photo. Recast one seat or all five; seats you skip keep the original performer.",
   "home_step_make_title": "Render it",
-  "home_step_make_text": "Confirm it's a parody and hit render. It takes a few minutes, and the tab can be closed.",
+  "home_step_make_text": "Confirm it's a parody and hit render. You can close the tab; we'll email you when it's ready. Failed renders refund credits automatically, and human review takes up to 24 hours.",
   "home_step_post_title": "Save and share",
   "home_step_post_text": "Download a vertical 9:16 MP4 with the track, plus a muted copy in case an app strips the audio.",
   "home_faq_what_q": "What is the Tiny Desk AI meme?",
@@ -54,7 +54,7 @@
   "home_faq_model_q": "Which AI model makes the video?",
   "home_faq_model_a": "Kling 4.0 (Kuaishou) in edit mode at {resolution}, rendering the full clip in a single pass.",
   "home_faq_time_q": "How long does it take?",
-  "home_faq_time_a": "Typically 7 to 10 minutes. Feel free to close the tab; your video will be on the home page when you sign back in.",
+  "home_faq_time_a": "Failed renders automatically refund credits. If a video needs human review, you'll get a result within 24 hours. If it times out, you get a full refund. Feel free to close the tab; your video will be on the home page when you sign back in.",
   "home_faq_format_q": "How long is the video, and what format?",
   "home_faq_format_a": "Around 18 seconds, vertical 9:16 MP4 at {resolution}, no watermark: band shot, the big laugh close-up, sax break, band shot again.",
   "home_faq_song_q": "Is the \"Outstanding\" song included?",
@@ -129,5 +129,8 @@
   "home_cats_band_label": "Tiny Desk meme video made on FaceRiff with all five seats played by cats",
   "home_cats_band_hook": "Pets can play too: five cats, one encore.",
   "home_cats_band_note": "Made on FaceRiff · sample cats",
-  "home_updated_date": "November 8, 2026"
+  "home_updated_date": "November 8, 2026",
+  "home_clip_play": "Play video",
+  "home_generated_count": "{count} videos generated",
+  "home_generated_count_one": "1 video generated"
 }

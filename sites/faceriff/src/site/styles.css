@@ -169,6 +169,57 @@ h3 {
 .clip-frame {
   position: relative;
 }
+.clip-poster,
+.sample-card .clip-poster,
+.shots .clip-poster,
+.viral .clip-poster {
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  border-radius: 14px;
+  background: var(--color-panel);
+}
+.clip-play {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+.clip-play-icon {
+  width: 4.25rem;
+  height: 4.25rem;
+  border-radius: 999px;
+  background: rgb(11 16 32 / 0.72);
+  box-shadow: 0 0 0 1px rgb(244 245 255 / 0.45);
+  position: relative;
+}
+.clip-play-icon::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 54%;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.7rem 0 0.7rem 1.15rem;
+  border-color: transparent transparent transparent var(--color-cream);
+  transform: translate(-40%, -50%);
+}
+.social-count {
+  margin: 0.65rem 0 0;
+  font-size: 0.95rem;
+}
+.presets .preset-upload {
+  position: relative;
+}
 .sample-card {
   grid-area: clip;
   position: sticky;
@@ -178,7 +229,10 @@ h3 {
   max-width: 25rem;
 }
 .sample-card video,
-.shots video {
+.sample-card .clip-poster,
+.shots .clip-frame,
+.shots video,
+.shots .clip-poster {
   display: block;
   width: 100%;
   aspect-ratio: 9 / 16;
@@ -186,7 +240,8 @@ h3 {
   border-radius: 14px;
   background: var(--color-panel);
 }
-.sample-card video {
+.sample-card video,
+.sample-card .clip-poster {
   box-shadow:
     0 0 0 1px var(--color-line),
     0 40px 90px rgb(0 0 0 / 0.65),
@@ -707,7 +762,8 @@ button:disabled {
   .sample-card .clip-frame {
     max-height: 62vh;
   }
-  .sample-card video {
+  .sample-card video,
+.sample-card .clip-poster {
     width: 100%;
     height: auto;
     max-height: 62vh;
@@ -997,7 +1053,7 @@ button:disabled {
   aspect-ratio: 1020 / 960;
   border-radius: 14px;
   overflow: hidden;
-  background: var(--color-panel) url("/media/stage.jpg") center / cover no-repeat;
+  background: var(--color-panel) url("/media/stage.webp") center / cover no-repeat;
   box-shadow: 0 0 0 1px var(--color-line);
 }
 /* When the hero switches to our output or the dog version, the stage shows the output's new faces to match the preview.
@@ -1008,13 +1064,13 @@ button:disabled {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: url("/media/stage-ours.jpg") center / cover no-repeat;
+  background: url("/media/stage-ours.webp") center / cover no-repeat;
   opacity: 0;
   transition: opacity 0.35s ease;
   pointer-events: none;
 }
 .desk::after {
-  background-image: url("/media/stage-dogs.jpg");
+  background-image: url("/media/stage-dogs.webp");
 }
 .desk-ours::before,
 .desk-dogs::after {
@@ -1904,7 +1960,8 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
 }
 .steps li:hover { transform: rotate(-1.5deg) translateY(-4px); }
 .sheet { border-radius: 2rem; box-shadow: 0 30px 80px rgb(0 0 0 / 0.35); }
-.sample-card video { border-radius: 1.5rem; box-shadow: 0 0 0 2px rgb(255 77 109 / 0.5), 0 40px 90px rgb(0 0 0 / 0.65), 0 0 120px rgb(139 92 246 / 0.3); }
+.sample-card video,
+.sample-card .clip-poster { border-radius: 1.5rem; box-shadow: 0 0 0 2px rgb(255 77 109 / 0.5), 0 40px 90px rgb(0 0 0 / 0.65), 0 0 120px rgb(139 92 246 / 0.3); }
 .sample-card { transition: transform 0.5s cubic-bezier(.34,1.56,.64,1); }
 .sample-card:hover { transform: rotate(1.5deg) scale(1.01); }
 .faq details { transition: background-color 0.2s; border-radius: 0.75rem; padding-inline: 0.75rem; }
@@ -2340,7 +2397,8 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
 
   .plan,
   .lineup li,
-  .sample-card video {
+  .sample-card video,
+.sample-card .clip-poster {
     box-shadow: 0 0 0 1px var(--color-line), 0 16px 40px rgb(0 0 0 / 0.45);
   }
   .plan:hover,

@@ -40,7 +40,7 @@
   "home_step_cast_title": "选好你的乐队",
   "home_step_cast_text": "点舞台上任意一只狗，换成你的照片。换一个或全换五个；没换的狗狗留在台上，点掉狗狗就保留原片教练。",
   "home_step_make_title": "生成视频",
-  "home_step_make_text": "勾上恶搞声明，点生成。需要几分钟；可以关掉标签页。",
+  "home_step_make_text": "勾上恶搞声明，点生成。可以关掉标签页，做好后我们会发邮件。失败会自动退积分，需要人工复核时 24 小时内给结果。",
   "home_step_post_title": "下载并发布",
   "home_step_post_text": "拿到带歌曲的 9:16 MP4，外加一份无声版，以防 app 把歌静音。",
   "home_faq_what_q": "Tiny Desk AI 是什么？",
@@ -54,7 +54,7 @@
   "home_faq_model_q": "用的是哪个 AI 模型？",
   "home_faq_model_a": "快手可灵 Kling 4.0 编辑模式，{resolution}，整段一次生成。",
   "home_faq_time_q": "要多久？",
-  "home_faq_time_a": "通常 7 到 10 分钟。可以关掉标签页：重新登录后视频就在首页等你。",
+  "home_faq_time_a": "生成失败会自动退还积分。如果需要人工复核，会在 24 小时内给出结果。超时则全额退款。可以关掉标签页：重新登录后视频就在首页等你。",
   "home_faq_format_q": "视频多长，什么格式？",
   "home_faq_format_a": "约 18 秒，竖屏 9:16 MP4，{resolution}，无水印：乐队、大笑特写、萨克斯独奏、乐队再现。",
   "home_faq_song_q": "包含《Outstanding》这首歌吗？",
@@ -129,5 +129,8 @@
   "home_cats_band_label": "在 FaceRiff 制作的 Tiny Desk 视频，五个人全部换成猫",
   "home_cats_band_hook": "宠物也能上台：五只猫接过麦克风，同一首歌，同一张桌子。",
   "home_cats_band_note": "在 FaceRiff 制作 · 示例猫猫",
-   "home_updated_date": "2026 年 11 月 8 日"
+  "home_updated_date": "2026 年 11 月 8 日",
+  "home_clip_play": "播放视频",
+  "home_generated_count": "已生成 {count} 条视频",
+  "home_generated_count_one": "已生成 1 条视频"
 }

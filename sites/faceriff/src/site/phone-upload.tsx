@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { renderSVG } from 'uqr';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
+import { IMAGE_ACCEPT, prepareUploadImage } from '~/site/image';
 
 // Upload photos from a phone by QR code (server side in handoff.server.ts).
 // Desktop: a line under the stage ("Photos on your phone? Scan to upload") opens a QR code; photos from the phone fill empty slots in order, and one scan covers the session.
@@ -171,38 +172,6 @@ export function PhoneHandoff({ place }: { place: (paths: string[]) => number }) 
 
 type Sent = { id: number; preview: string; status: 'sending' | 'sent' | 'failed' };
 
-const MAX_SIDE = 2048;
-
-/**
- * Phone originals often exceed the upload limit (10 MB), and Android may give HEIC: shrink to a JPEG with a 2048 long edge first; face swap needs no more.
- * Formats the browser cannot decode upload as is and the server reports the error.
- */
-async function shrink(file: File): Promise<Blob> {
-  const isHeic =
-    /image\/hei[cf]/i.test(file.type) || /\.(heic|heif)$/i.test(file.name || '');
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
-    if (blob) return blob;
-  } catch {
-    // fall through
-  }
-  if (isHeic) {
-    throw new Error(m.common_tool_file_type());
-  }
-  // Non-HEIC fallback: upload original if the browser already gave PNG/JPEG/WebP.
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-    throw new Error(m.common_tool_file_type());
-  }
-  return file;
-}
-
 /** Phone upload page (/phone/<code>): pick a few photos, upload each and register it under the pairing code. */
 export function PhoneUploadPage({ token }: { token: string }) {
   const [sent, setSent] = useState<Sent[]>([]);
@@ -233,11 +202,8 @@ export function PhoneUploadPage({ token }: { token: string }) {
     // Upload one at a time: desktop fills slots in registration order, which must match the user's selection.
     for (const { file, id } of batch) {
       try {
-        const blob = await shrink(file);
-        // Always POST as JPEG — server only accepts png/jpeg/webp (HEIC rejected).
-        const path = await uploadReference(
-          new File([blob], `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' }),
-        );
+        const prepared = await prepareUploadImage(file);
+        const path = await uploadReference(prepared);
         const response = await fetch(`/api/handoff/${token}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -270,7 +236,7 @@ export function PhoneUploadPage({ token }: { token: string }) {
             {sending ? m.common_phone_sending() : done ? m.common_phone_more() : m.common_phone_pick()}
             <input
               type="file"
-              accept="image/png,image/jpeg,image/jpg,image/webp,.png,.jpg,.jpeg,.webp"
+              accept={IMAGE_ACCEPT}
               multiple
               className="sr-only"
               disabled={sending}

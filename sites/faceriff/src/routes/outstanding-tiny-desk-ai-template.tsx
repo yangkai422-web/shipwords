@@ -1,6 +1,7 @@
 import { pageHead } from '@shipwords/core/seo';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { m } from '~/paraglide/messages.js';
+import { ClickToPlayClip } from '~/site/clip';
 import { Faq, type FaqItem, faqJsonLd, GuidePage } from '~/site/guide';
 import { formatPrice } from '~/site/pricing';
 import site from '../../site.config';
@@ -73,15 +74,9 @@ function TemplatePage() {
       <ol className="shots guide-shots">
         {shotList.map((shot) => (
           <li key={shot.time}>
-            <video
-              src={`/media/${shot.clip}.mp4`}
-              poster={`/media/${shot.clip}.jpg`}
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="none"
-              aria-label={m.guides_template_shot_aria({ shot: shot.name })}
+            <ClickToPlayClip
+              clip={shot.clip}
+              label={m.guides_template_shot_aria({ shot: shot.name })}
             />
             <span className="mono">{shot.time}</span>
             <strong>{shot.name}</strong>
