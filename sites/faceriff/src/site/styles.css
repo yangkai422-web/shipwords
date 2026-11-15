@@ -1298,6 +1298,15 @@ button:disabled {
   margin: 0 0 1.25rem;
   font-size: 0.9rem;
 }
+.checkout-email {
+  margin: 0 0 1.25rem;
+}
+.checkout-email input {
+  width: 100%;
+}
+.checkout-email-note {
+  font-size: 0.8rem;
+}
 /* Pricing dialog: reuses the sign-in dialog frame, wider for three plan cards */
 .pricing-dialog {
   width: min(44rem, calc(100vw - 2rem));

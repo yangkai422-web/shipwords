@@ -1,7 +1,7 @@
 import { useCheckout } from '@shipwords/core/react/account';
 import type { Product } from '@shipwords/core/site';
 import { getRouteApi, Link } from '@tanstack/react-router';
-import { type MouseEvent, type ReactNode, useEffect, useRef } from 'react';
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { authClient } from '~/lib/auth';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
@@ -89,7 +89,7 @@ function savings(product: (typeof site.products)[number]) {
   return Math.round((1 - unit(product) / unit(base)) * 100);
 }
 
-/** Plan cards + buy buttons. The Render button opens this dialog first; signed-out visitors still sign in when they click buy, because checkout in core requires a session. compact is for the dialog and skips the inclusions. */
+/** Plan cards + buy buttons. compact is for the dialog and skips the inclusions. An email is collected here and stored on the order. PayPal checkout still needs a signed-in session so credits can be granted. */
 export function Plans({
   heading: Heading = 'h3',
   compact = false,
@@ -103,12 +103,29 @@ export function Plans({
   const config = root.useLoaderData();
   const session = authClient(config.googleClientId).useSession();
   const { checkout, pending, error } = useCheckout();
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const prefilled = useRef(false);
+
+  useEffect(() => {
+    const fromAccount = session.data?.user.email;
+    if (!prefilled.current && fromAccount) {
+      setEmail(fromAccount);
+      prefilled.current = true;
+    }
+  }, [session.data]);
 
   function buy(productId: string) {
     // After paying, return to the generator; stage photos restore from sessionStorage (tool.tsx).
+    const normalized = email.trim();
+    if (!normalized || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      setEmailError(m.common_checkout_email_invalid());
+      return;
+    }
+    setEmailError(null);
     const start = () => {
       track('checkout_start', { product: productId, source });
-      void checkout(productId, RESUME_PATH);
+      void checkout(productId, RESUME_PATH, normalized);
     };
     if (source !== 'dialog') track('pay_panel_view', { source });
     if (session.data) start();
@@ -121,6 +138,24 @@ export function Plans({
 
   return (
     <>
+      <label className="checkout-email">
+        {m.common_checkout_email()}
+        <input
+          type="email"
+          name="email"
+          autoComplete="email"
+          inputMode="email"
+          required
+          value={email}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            if (emailError) setEmailError(null);
+          }}
+          placeholder={m.common_checkout_email_placeholder()}
+        />
+        <span className="checkout-email-note">{m.common_checkout_email_note()}</span>
+      </label>
+      {emailError && <p className="error">{emailError}</p>}
       <div className="plans">
         {site.products.map((product, i) => {
           const featured = i === 1;

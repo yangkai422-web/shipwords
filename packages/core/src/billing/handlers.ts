@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { isDisposableEmail } from '../auth/disposable';
 import { type Db, isConstraintError, newId } from '../db/client';
 import { billingCustomers, orders, payments, subscriptions, webhookEvents } from '../db/schema';
 import { errorResponse, json, readJson, safeRelativePath } from '../http';
@@ -32,6 +33,22 @@ const reconcileCtx = (deps: BillingDeps): ReconcileContext => ({
 
 const safeReturnPath = safeRelativePath;
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Normalize a checkout contact email. Empty input falls back to the account email. */
+export function resolveCheckoutEmail(
+  provided: unknown,
+  accountEmail: string,
+): { ok: true; email: string } | { ok: false; error: 'invalid_email' } {
+  if (provided == null || (typeof provided === 'string' && provided.trim() === '')) {
+    return { ok: true, email: accountEmail };
+  }
+  if (typeof provided !== 'string') return { ok: false, error: 'invalid_email' };
+  const email = provided.trim().toLowerCase();
+  if (!EMAIL_RE.test(email) || isDisposableEmail(email)) return { ok: false, error: 'invalid_email' };
+  return { ok: true, email };
+}
+
 async function ensureCustomer(deps: BillingDeps, user: SessionUser): Promise<string> {
   const where = and(eq(billingCustomers.userId, user.id), eq(billingCustomers.provider, deps.provider.name));
   const existing = await deps.db.query.billingCustomers.findFirst({ where });
@@ -52,10 +69,12 @@ async function ensureCustomer(deps: BillingDeps, user: SessionUser): Promise<str
 export async function handleCheckout(deps: BillingDeps, request: Request): Promise<Response> {
   const user = await deps.getUser(request);
   if (!user) return errorResponse(401, 'unauthorized');
-  const body = await readJson<{ productId?: string; returnPath?: string }>(request);
+  const body = await readJson<{ productId?: string; returnPath?: string; email?: string }>(request);
   // Price and credits come only from the server-side catalog; never trust any amount in the request.
   const product = body?.productId ? findProduct(deps.site, body.productId) : undefined;
   if (!product) return errorResponse(400, 'unknown_product');
+  const contact = resolveCheckoutEmail(body?.email, user.email);
+  if (!contact.ok) return errorResponse(400, 'invalid_email', 'Enter a valid email address.');
 
   const customerRef = await ensureCustomer(deps, user);
   const orderId = newId('ord');
@@ -66,6 +85,7 @@ export async function handleCheckout(deps: BillingDeps, request: Request): Promi
     provider: deps.provider.name,
     amount: product.price.amount,
     currency: product.price.currency,
+    email: contact.email,
   });
   const returnPath = safeReturnPath(body?.returnPath, '/account');
   const successUrl = `${deps.baseURL}/billing/return?order=${orderId}&next=${encodeURIComponent(returnPath)}`;

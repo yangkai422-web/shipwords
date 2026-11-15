@@ -67,6 +67,8 @@ describe('reCAPTCHA', () => {
     expect(await verifyRecaptcha(recaptcha, 't', 'generate', 0.5, down)).toMatchObject({
       reason: 'unavailable',
     });
+    const unset = { siteKey: '', projectId: '', apiKey: '' };
+    expect(await verifyRecaptcha(unset, null, 'generate', 0.5, down)).toEqual({ ok: true, score: 1 });
   });
 });
 
@@ -106,6 +108,33 @@ describe('guest trial', () => {
     for (let i = 0; i < 4; i++)
       results.push(await authorizeGuest({ ...base, request: request(forged, ip), fetcher: assessment(0.9) }));
     expect(results.map((r) => r.ok)).toEqual([true, true, true, false]);
+  });
+
+  it('skips captcha when reCAPTCHA is not configured and still applies the daily device limit', async () => {
+    const unset = { siteKey: '', projectId: '', apiKey: '' };
+    const ip = '203.0.113.80';
+    const first = await authorizeGuest({
+      ...base,
+      recaptcha: unset,
+      recaptchaToken: null,
+      request: request(undefined, ip),
+    });
+    expect(first.ok).toBe(true);
+    const cookie = first.setCookie!.split(';')[0]!;
+    const second = await authorizeGuest({
+      ...base,
+      recaptcha: unset,
+      recaptchaToken: null,
+      request: request(cookie, ip),
+    });
+    const third = await authorizeGuest({
+      ...base,
+      recaptcha: unset,
+      recaptchaToken: null,
+      request: request(cookie, ip),
+    });
+    expect(second.ok).toBe(true);
+    expect(third).toMatchObject({ ok: false, reason: 'quota' });
   });
 
   it('low scores are rejected without consuming quota', async () => {

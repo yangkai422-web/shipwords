@@ -484,10 +484,6 @@ export function TinyDeskTool({
       availableCredits: credits,
       costCredits: typeof MODEL.credits === 'number' ? MODEL.credits : 10,
     });
-    if (decision === 'need_signin') {
-      openSignIn(() => void unlockFull(), 'unlock');
-      return;
-    }
     if (decision === 'wait_account') {
       setPreparing(true);
       try {
@@ -521,7 +517,6 @@ export function TinyDeskTool({
       consent,
       rendering,
       confirmAnother,
-      signedIn: Boolean(session.data),
     });
     if (decision === 'need_photo') {
       click('no_photo');
@@ -540,11 +535,6 @@ export function TinyDeskTool({
       return;
     }
     setConfirmAnother(false);
-    if (decision === 'need_signin') {
-      click('signin');
-      openSignIn(() => void start('preview'), 'render');
-      return;
-    }
     if (decision !== 'start') return;
     click('none');
     await start('preview');

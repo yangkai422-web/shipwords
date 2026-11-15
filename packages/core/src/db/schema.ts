@@ -178,6 +178,8 @@ export const orders = sqliteTable(
       .notNull()
       .default('pending'),
     checkoutRef: text('checkout_ref'),
+    /** Contact email collected at checkout. */
+    email: text('email'),
     createdAt: createdAt(),
     paidAt: integer('paid_at', { mode: 'number' }),
   },

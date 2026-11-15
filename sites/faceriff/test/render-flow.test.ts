@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import site from '../site.config';
+import models from '../site.models';
 import { decideRender, decideUnlock } from '../src/site/render-flow';
 import { assignOpenSeats, isHeic, isSupportedImage } from '../src/site/image';
 
@@ -7,7 +9,6 @@ const base = {
   consent: true,
   rendering: false,
   confirmAnother: false,
-  signedIn: false,
 };
 
 describe('decideRender', () => {
@@ -17,15 +18,11 @@ describe('decideRender', () => {
 
   it('asks for consent and another-job confirmation before starting a preview', () => {
     expect(decideRender({ ...base, consent: false })).toBe('need_consent');
-    expect(decideRender({ ...base, signedIn: true, rendering: true })).toBe('confirm_another');
+    expect(decideRender({ ...base, rendering: true })).toBe('confirm_another');
   });
 
-  it('asks signed-out visitors to sign in instead of opening packs', () => {
-    expect(decideRender(base)).toBe('need_signin');
-  });
-
-  it('starts a free preview for a signed-in user even without credits', () => {
-    expect(decideRender({ ...base, signedIn: true })).toBe('start');
+  it('starts a free preview for a signed-out visitor once a photo is on the stage', () => {
+    expect(decideRender(base)).toBe('start');
   });
 });
 
@@ -37,9 +34,9 @@ describe('decideUnlock', () => {
     costCredits: 10,
   };
 
-  it('opens packs when the signed-in user does not have enough credits', () => {
+  it('opens packs when the visitor is signed out or does not have enough credits', () => {
     expect(decideUnlock({ ...unlock, availableCredits: 9 })).toBe('open_pricing');
-    expect(decideUnlock({ ...unlock, signedIn: false, availableCredits: 0 })).toBe('need_signin');
+    expect(decideUnlock({ ...unlock, signedIn: false, availableCredits: 0 })).toBe('open_pricing');
   });
 
   it('spends a credit after the preview when the balance is enough', () => {
@@ -51,6 +48,16 @@ describe('decideUnlock', () => {
       'wait_account',
     );
     expect(decideUnlock({ ...unlock, accountLoading: false, availableCredits: null })).toBe('start');
+  });
+});
+
+describe('guest preview model', () => {
+  it('allows guests to run only the free preview, with a non-zero guest quota', () => {
+    expect(models.find((model) => model.id === 'tiny-desk-preview')?.guest).toBe(true);
+    expect(models.find((model) => model.id === 'tiny-desk')?.guest).toBe(false);
+    expect(site.guest.dailyPerDevice).toBeGreaterThan(0);
+    expect(site.guest.dailyPerIp).toBeGreaterThan(0);
+    expect(site.guest.dailySiteBudget).toBeGreaterThan(0);
   });
 });
 

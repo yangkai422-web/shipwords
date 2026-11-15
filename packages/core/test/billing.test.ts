@@ -9,6 +9,7 @@ import {
   handleSyncOrder,
   handleWebhook,
   recentOrders,
+  resolveCheckoutEmail,
 } from '../src/billing/handlers';
 import type {
   CheckoutFact,
@@ -417,6 +418,50 @@ describe('checkout', () => {
       body: JSON.stringify({ productId: 'nope' }),
     });
     expect((await handleCheckout(deps, unknown)).status).toBe(400);
+  });
+
+  it('stores the checkout email on the order, falling back to the account email', async () => {
+    currentUser = { id: uid(), email: 'account@example.com', name: 'A' };
+    const checkout = (email?: string) =>
+      handleCheckout(
+        deps,
+        new Request('https://test.example/api/billing/checkout', {
+          method: 'POST',
+          body: JSON.stringify({ productId: 'pack_100', email }),
+        }),
+      );
+
+    const invalid = await checkout('not-an-email');
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ error: { code: 'invalid_email' } });
+
+    const disposable = await checkout('a@mailinator.com');
+    expect(disposable.status).toBe(400);
+
+    const custom = await checkout('  Receipt.Me@Example.COM ');
+    const { orderId: customId } = (await custom.json()) as { orderId: string };
+    expect((await db.query.orders.findFirst({ where: eq(orders.id, customId) }))?.email).toBe(
+      'receipt.me@example.com',
+    );
+
+    const fallback = await checkout();
+    const { orderId: fallbackId } = (await fallback.json()) as { orderId: string };
+    expect((await db.query.orders.findFirst({ where: eq(orders.id, fallbackId) }))?.email).toBe(
+      'account@example.com',
+    );
+  });
+
+  it('resolveCheckoutEmail validates and normalizes the contact email', () => {
+    expect(resolveCheckoutEmail(undefined, 'a@example.com')).toEqual({ ok: true, email: 'a@example.com' });
+    expect(resolveCheckoutEmail('  B@Example.COM ', 'a@example.com')).toEqual({
+      ok: true,
+      email: 'b@example.com',
+    });
+    expect(resolveCheckoutEmail('nope', 'a@example.com')).toEqual({ ok: false, error: 'invalid_email' });
+    expect(resolveCheckoutEmail('a@mailinator.com', 'a@example.com')).toEqual({
+      ok: false,
+      error: 'invalid_email',
+    });
   });
 
   it('price comes only from the catalog; return path must be site-relative; order is paid after return sync', async () => {

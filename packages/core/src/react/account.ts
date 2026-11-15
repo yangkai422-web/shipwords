@@ -77,15 +77,15 @@ export function useAccount() {
   return { data, loading, refresh };
 }
 
-/** Starts checkout and redirects to the hosted payment page. Callers should prompt sign-in first when signed out. */
+/** Starts checkout and redirects to the hosted payment page. Callers should prompt sign-in first when signed out, and may pass the contact email collected at checkout. */
 export function useCheckout() {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const checkout = useCallback(async (productId: string, returnPath?: string) => {
+  const checkout = useCallback(async (productId: string, returnPath?: string, email?: string) => {
     setPending(productId);
     setError(null);
     try {
-      const { url } = await postJson<{ url: string }>('/api/billing/checkout', { productId, returnPath });
+      const { url } = await postJson<{ url: string }>('/api/billing/checkout', { productId, returnPath, email });
       window.location.assign(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Checkout failed');

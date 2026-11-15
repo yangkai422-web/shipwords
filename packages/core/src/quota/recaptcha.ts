@@ -28,6 +28,8 @@ export async function verifyRecaptcha(
   minScore: number,
   fetcher: typeof fetch = fetch,
 ): Promise<RecaptchaResult> {
+  // When keys are unset (common in local/dev), skip captcha and rely on the guest quota counters.
+  if (!config.siteKey || !config.projectId || !config.apiKey) return { ok: true, score: 1 };
   if (!token) return { ok: false, reason: 'missing_token' };
   const url = `https://recaptchaenterprise.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/assessments?key=${encodeURIComponent(config.apiKey)}`;
   let assessment: Assessment;

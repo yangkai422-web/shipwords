@@ -132,7 +132,8 @@ export default defineModels([
       upstream: 'yir',
       upstreamModel: 'klingai/kling-4.0',
       credits: 0,
-      guest: false,
+      // Guests may start this free watermarked preview; the full tiny-desk model stays signed-in only.
+      guest: true,
       allowedParameters: [],
       maxReferences: 0,
       // 5 s at 480p should be a fraction of the $3.06 full 18 s / 720p render; cap with headroom.

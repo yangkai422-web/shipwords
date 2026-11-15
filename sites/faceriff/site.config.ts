@@ -2,7 +2,7 @@ import { defineSite } from '@shipwords/core/site';
 
 // FaceRiff: meme video generator. First meme: Tiny Desk AI (adapted from sites/tinydeskai-example).
 // All config for this site. Price amounts are in the smallest currency unit (cents). Never change ids after launch.
-// Pick a pack and pay, then generate. Sign-in is still required at checkout until guest checkout ships in core. No guest trial and no sign-up bonus.
+// Free 480p preview is open to guests (see guest quota below). Checkout still needs a signed-in session so credits can be granted; the contact email is collected in the pricing form and stored on the order. No sign-up bonus.
 export default defineSite({
   id: 'faceriff',
   name: 'FaceRiff',
@@ -37,7 +37,8 @@ export default defineSite({
     },
   ],
   signup: { bonusCredits: 0, bonusExpiresDays: null, bonusPerIpDaily: 0 },
-  guest: { dailyPerDevice: 0, dailyPerIp: 0, dailySiteBudget: 0, minRecaptchaScore: 0.5 },
+  // Caps free tiny-desk-preview jobs (real upstream cost in production). Full tiny-desk stays signed-in only.
+  guest: { dailyPerDevice: 2, dailyPerIp: 8, dailySiteBudget: 100, minRecaptchaScore: 0.5 },
   billing: { provider: 'paypal' },
   analytics: {},
 });
