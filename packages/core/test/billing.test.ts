@@ -540,3 +540,36 @@ describe('checkout', () => {
     expect(rows.get(discounted)).toMatchObject({ amount: 1000, amountPaid: 800 });
   });
 });
+
+describe('onPaymentApplied hook', () => {
+  it('fires after a paid payment is applied, including retries, and does not run when ignored', async () => {
+    const userId = uid();
+    const seen: string[] = [];
+    const hooked = {
+      ...ctx(),
+      onPaymentApplied: async (fact: PaymentFact) => {
+        seen.push(`${fact.paymentRef}:${fact.orderId}`);
+      },
+    };
+    expect(await applyPayment(hooked, packPayment(userId, 'pi_hook', { paid: false }))).toBe('ignored');
+    expect(seen).toEqual([]);
+    const paid = packPayment(userId, 'pi_hook', { orderId: 'ord_hook' });
+    expect(await applyPayment(hooked, paid)).toBe('applied');
+    expect(await applyPayment(hooked, paid)).toBe('applied');
+    expect(seen).toEqual(['pi_hook:ord_hook', 'pi_hook:ord_hook']);
+  });
+
+  it('still applies the payment if the hook throws', async () => {
+    const userId = uid();
+    const hooked = {
+      ...ctx(),
+      onPaymentApplied: async () => {
+        throw new Error('hook exploded');
+      },
+    };
+    expect(await applyPayment(hooked, packPayment(userId, 'pi_safe', { orderId: 'ord_safe' }))).toBe(
+      'applied',
+    );
+    expect((await getBalance(db, userId)).available).toBe(100);
+  });
+});

@@ -115,5 +115,11 @@ export function mockComposer(bucket: R2Bucket, fixed?: { song: string; silent: s
     async faces(input) {
       return input.points.map(() => 0);
     },
+    async trim(input) {
+      const object = await bucket.get(input.key);
+      if (!object) throw new Error(`mock trim input missing: ${input.key}`);
+      // Local mock has no ffmpeg: echo the source clip. UI flow still works.
+      return object.arrayBuffer();
+    },
   };
 }

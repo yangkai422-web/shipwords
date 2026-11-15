@@ -19,6 +19,7 @@ export interface BillingDeps {
   baseURL: string;
   getUser: (request: Request) => Promise<SessionUser | null>;
   log: (message: string, details: Record<string, unknown>) => void;
+  onPaymentApplied?: ReconcileContext['onPaymentApplied'];
 }
 
 const reconcileCtx = (deps: BillingDeps): ReconcileContext => ({
@@ -26,6 +27,7 @@ const reconcileCtx = (deps: BillingDeps): ReconcileContext => ({
   site: deps.site,
   provider: deps.provider,
   log: deps.log,
+  onPaymentApplied: deps.onPaymentApplied,
 });
 
 const safeReturnPath = safeRelativePath;

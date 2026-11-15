@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideRender } from '../src/site/render-flow';
+import { decideRender, decideUnlock } from '../src/site/render-flow';
 import { assignOpenSeats, isHeic, isSupportedImage } from '../src/site/image';
 
 const base = {
@@ -8,39 +8,49 @@ const base = {
   rendering: false,
   confirmAnother: false,
   signedIn: false,
-  accountLoading: false,
-  availableCredits: null as number | null,
-  costCredits: 10,
 };
 
 describe('decideRender', () => {
-  it('blocks a paid render when no photo of yours is on the stage', () => {
+  it('blocks a preview when no photo of yours is on the stage', () => {
     expect(decideRender({ ...base, ownPhotoCount: 0 })).toBe('need_photo');
   });
 
-  it('asks for consent and another-job confirmation before payment', () => {
+  it('asks for consent and another-job confirmation before starting a preview', () => {
     expect(decideRender({ ...base, consent: false })).toBe('need_consent');
-    expect(decideRender({ ...base, signedIn: true, availableCredits: 20, rendering: true })).toBe(
-      'confirm_another',
-    );
+    expect(decideRender({ ...base, signedIn: true, rendering: true })).toBe('confirm_another');
   });
 
-  it('opens the pack dialog for signed-out visitors instead of sign-in', () => {
-    expect(decideRender(base)).toBe('open_pricing');
+  it('asks signed-out visitors to sign in instead of opening packs', () => {
+    expect(decideRender(base)).toBe('need_signin');
   });
 
-  it('lets a signed-in user with enough credits render, otherwise opens packs', () => {
-    expect(decideRender({ ...base, signedIn: true, availableCredits: 10 })).toBe('start');
-    expect(decideRender({ ...base, signedIn: true, availableCredits: 9 })).toBe('open_pricing');
+  it('starts a free preview for a signed-in user even without credits', () => {
+    expect(decideRender({ ...base, signedIn: true })).toBe('start');
+  });
+});
+
+describe('decideUnlock', () => {
+  const unlock = {
+    signedIn: true,
+    accountLoading: false,
+    availableCredits: 10 as number | null,
+    costCredits: 10,
+  };
+
+  it('opens packs when the signed-in user does not have enough credits', () => {
+    expect(decideUnlock({ ...unlock, availableCredits: 9 })).toBe('open_pricing');
+    expect(decideUnlock({ ...unlock, signedIn: false, availableCredits: 0 })).toBe('need_signin');
+  });
+
+  it('spends a credit after the preview when the balance is enough', () => {
+    expect(decideUnlock(unlock)).toBe('start');
   });
 
   it('waits for account data, then falls back to generate if the account request failed', () => {
-    expect(decideRender({ ...base, signedIn: true, accountLoading: true, availableCredits: null })).toBe(
+    expect(decideUnlock({ ...unlock, accountLoading: true, availableCredits: null })).toBe(
       'wait_account',
     );
-    expect(decideRender({ ...base, signedIn: true, accountLoading: false, availableCredits: null })).toBe(
-      'start',
-    );
+    expect(decideUnlock({ ...unlock, accountLoading: false, availableCredits: null })).toBe('start');
   });
 });
 

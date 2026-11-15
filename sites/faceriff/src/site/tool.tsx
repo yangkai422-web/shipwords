@@ -17,16 +17,17 @@ import { openAccount } from '~/site/account';
 import { PhoneHandoff } from '~/site/phone-upload';
 import { assignOpenSeats, IMAGE_ACCEPT, isSupportedImage, prepareUploadImage } from '~/site/image';
 import { formatPrice, openPricing, PricingLink } from '~/site/pricing';
-import { decideRender } from '~/site/render-flow';
+import { decideRender, decideUnlock } from '~/site/render-flow';
 import { openSignIn } from '~/site/sign-in';
 import site from '../../site.config';
 import models from '../../site.models';
 
 // The generator on the home page: a stage image with a round face slot on each of the 5 musicians. Click one to upload a photo.
 // The 5 slots start with 5 dogs (the same cast as the hero dog version; every competitor's sample is people, so dogs set us apart): click a dog to swap in your photo,
-// × on your photo puts the dog back, × on a dog keeps the original coach. At least 1 photo of your own; same price for 1–5 people. Render opens the pack dialog when you need to pay; already-signed-in users with credits generate immediately. Design: DESIGN.md "Upload area".
+// × on your photo puts the dog back, × on a dog keeps the original coach. At least 1 photo of your own; same price for 1–5 people. Render starts a free 5-second watermarked preview; after watching it, pay $9.88 (or spend credits) to unlock the full video. Signed-out users are asked to sign in first. Design: DESIGN.md "Upload area".
 
-const MODEL = models[0];
+const MODEL = models.find((model) => model.id === 'tiny-desk') ?? models[0];
+const PREVIEW_MODEL = models.find((model) => model.id === 'tiny-desk-preview');
 const SLOTS = MODEL.effect?.slots ?? [];
 const PRODUCT = site.products.find((p) => p.kind === 'credits' && p.credits === MODEL.credits);
 const PRICE = PRODUCT ? formatPrice(PRODUCT) : '';
@@ -457,16 +458,57 @@ export function TinyDeskTool({
     return slots;
   }
 
-  async function start() {
+  async function start(kind: 'preview' | 'full') {
+    const modelId = kind === 'preview' ? (PREVIEW_MODEL?.id ?? MODEL.id) : MODEL.id;
     setUploadError(null);
     setPreparing(true);
     const slots = await uploadDogs(photosRef.current);
     setPreparing(false);
     if (!slots) return;
-    const job = await generate({ modelId: MODEL.id, slots });
+    const job = await generate({ modelId, slots });
     if (!job) return;
-    track('generate_started', { faces: own.length, dogs: filled.length - own.length, another: rendering });
-    showStarted(started.current);
+    track('generate_started', {
+      faces: own.length,
+      dogs: filled.length - own.length,
+      another: rendering,
+      kind,
+    });
+    if (kind === 'preview') showStarted(started.current);
+  }
+
+  async function unlockFull() {
+    const credits = account.data ? account.data.balance.available : null;
+    let decision = decideUnlock({
+      signedIn: Boolean(session.data),
+      accountLoading: account.loading,
+      availableCredits: credits,
+      costCredits: typeof MODEL.credits === 'number' ? MODEL.credits : 10,
+    });
+    if (decision === 'need_signin') {
+      openSignIn(() => void unlockFull(), 'unlock');
+      return;
+    }
+    if (decision === 'wait_account') {
+      setPreparing(true);
+      try {
+        const response = await fetch('/api/billing/me');
+        const data = response.ok ? ((await response.json()) as { balance?: { available?: number } }) : null;
+        decision = decideUnlock({
+          signedIn: Boolean(session.data),
+          accountLoading: false,
+          availableCredits: data?.balance?.available ?? null,
+          costCredits: typeof MODEL.credits === 'number' ? MODEL.credits : 10,
+        });
+      } finally {
+        setPreparing(false);
+      }
+    }
+    if (decision === 'open_pricing') {
+      openPricing('unlock');
+      return;
+    }
+    if (decision !== 'start') return;
+    await start('full');
   }
 
   async function onSubmit(event: FormEvent) {
@@ -474,16 +516,12 @@ export function TinyDeskTool({
     // blocked records which step this click stopped at; none means generation starts.
     track('render_click', { faces: own.length });
     const click = (blocked: string) => track('generate_click', { faces: own.length, blocked });
-    const credits = account.data ? account.data.balance.available : null;
     let decision = decideRender({
       ownPhotoCount: own.length,
       consent,
       rendering,
       confirmAnother,
       signedIn: Boolean(session.data),
-      accountLoading: account.loading,
-      availableCredits: credits,
-      costCredits: MODEL.credits,
     });
     if (decision === 'need_photo') {
       click('no_photo');
@@ -502,34 +540,14 @@ export function TinyDeskTool({
       return;
     }
     setConfirmAnother(false);
-    if (decision === 'wait_account') {
-      setPreparing(true);
-      try {
-        const response = await fetch('/api/billing/me');
-        const data = response.ok ? ((await response.json()) as { balance?: { available?: number } }) : null;
-        decision = decideRender({
-          ownPhotoCount: own.length,
-          consent,
-          rendering,
-          confirmAnother: true,
-          signedIn: Boolean(session.data),
-          accountLoading: false,
-          availableCredits: data?.balance?.available ?? null,
-          costCredits: MODEL.credits,
-        });
-      } finally {
-        setPreparing(false);
-      }
-    }
-    if (decision === 'open_pricing') {
-      click('pricing');
-      // Pack dialog first. Stage photos stay in sessionStorage through checkout.
-      openPricing('generate');
+    if (decision === 'need_signin') {
+      click('signin');
+      openSignIn(() => void start('preview'), 'render');
       return;
     }
     if (decision !== 'start') return;
     click('none');
-    await start();
+    await start('preview');
   }
 
   return (
@@ -685,14 +703,13 @@ export function TinyDeskTool({
           ) : (
             <>
               {confirmAnother ? m.common_tool_submit_another() : m.common_tool_submit()}
-              <span className="cta-price">{PRICE}</span>
             </>
           )}
         </button>
       </div>
-      <p className="tool-hint mono">{m.common_tool_hint()}</p>
+      <p className="tool-hint mono">{m.common_tool_hint({ price: PRICE })}</p>
       {resumed && !error && jobs.length === 0 && <p className="notice">{m.common_tool_resumed()}</p>}
-      {confirmAnother && <p className="notice">{m.common_tool_confirm_another({ price: PRICE })}</p>}
+      {confirmAnother && <p className="notice">{m.common_tool_confirm_another()}</p>}
       {own.length === 0 && <p className="notice">{m.common_tool_need_photo()}</p>}
       {uploadError && <p className="error">{uploadError}</p>}
       {error && <GenerationError code={error.code} message={error.message} />}
@@ -703,6 +720,13 @@ export function TinyDeskTool({
               key={job.id}
               job={job}
               email={session.data?.user.email}
+              price={PRICE}
+              isPreview={Boolean(PREVIEW_MODEL && job.modelId === PREVIEW_MODEL.id)}
+              canUnlockWithCredits={
+                (account.data?.balance.available ?? 0) >= (typeof MODEL.credits === 'number' ? MODEL.credits : 10)
+              }
+              unlocking={submitting || preparing}
+              onUnlock={() => void unlockFull()}
               onDismiss={
                 job.status === 'failed' || job.status === 'canceled' || job.status === 'succeeded'
                   ? () => dismissJob(job.id)
@@ -752,7 +776,7 @@ function StartedDialog({ dialog, email }: { dialog: RefObject<HTMLDialogElement 
         <path d="M7 44h32" />
       </svg>
       <h2 id="started-title">{m.common_started_title()}</h2>
-      <p>{m.common_started_body()}</p>
+      <p>{m.common_started_body({ price: PRICE })}</p>
       <p>{email ? m.common_started_email({ email }) : m.common_started_email_generic()}</p>
       <p className="muted started-return">{m.common_started_return()}</p>
       <button type="button" className="primary" onClick={close}>
@@ -787,7 +811,11 @@ export function ReturnNotice({ jobs }: { jobs: PublicJob[] }) {
       data-rybbit-event="return_notice_click"
       data-rybbit-prop-state={rendering ? 'rendering' : 'ready'}
     >
-      {rendering ? m.common_return_rendering() : m.common_return_ready()}
+      {rendering
+        ? m.common_return_rendering()
+        : latest && PREVIEW_MODEL && latest.modelId === PREVIEW_MODEL.id
+          ? m.common_return_ready_preview()
+          : m.common_return_ready()}
     </a>
   );
 }
@@ -844,10 +872,20 @@ function formatElapsed(seconds: number) {
 function JobCard({
   job,
   email,
+  price,
+  isPreview,
+  canUnlockWithCredits,
+  unlocking,
+  onUnlock,
   onDismiss,
 }: {
   job: PublicJob;
   email?: string;
+  price: string;
+  isPreview?: boolean;
+  canUnlockWithCredits?: boolean;
+  unlocking?: boolean;
+  onUnlock?: () => void;
   onDismiss?: () => void;
 }) {
   const active = job.status === 'queued' || job.status === 'submitted';
@@ -909,21 +947,43 @@ function JobCard({
           {/* biome-ignore lint/a11y/useMediaCaption: generated videos have no caption track. */}
           <video src={job.outputs[0].url} controls playsInline />
           <div className="job-body">
-          <div className="job-downloads">
-            {job.outputs.map((output, i) => (
-              <a
-                key={output.url}
-                className="button"
-                href={output.url}
-                download={`tiny-desk-ai-${job.id.slice(-6)}-${VERSIONS[i] ?? i}.mp4`}
-                data-rybbit-event="video_download"
-                data-rybbit-prop-version={VERSIONS[i] ?? i}
-              >
-                {(DOWNLOADS[i] ?? m.common_job_download)()}
-              </a>
-            ))}
-          </div>
-          {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
+          {isPreview ? (
+            <>
+              <p className="muted job-tip">{m.common_job_preview_note({ price })}</p>
+              {onUnlock && (
+                <button
+                  type="button"
+                  className="button primary job-unlock"
+                  disabled={unlocking}
+                  onClick={onUnlock}
+                >
+                  {unlocking
+                    ? m.common_job_unlocking()
+                    : canUnlockWithCredits
+                      ? m.common_job_unlock_credits()
+                      : m.common_job_unlock({ price })}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="job-downloads">
+                {job.outputs.map((output, i) => (
+                  <a
+                    key={output.url}
+                    className="button"
+                    href={output.url}
+                    download={`tiny-desk-ai-${job.id.slice(-6)}-${VERSIONS[i] ?? i}.mp4`}
+                    data-rybbit-event="video_download"
+                    data-rybbit-prop-version={VERSIONS[i] ?? i}
+                  >
+                    {(DOWNLOADS[i] ?? m.common_job_download)()}
+                  </a>
+                ))}
+              </div>
+              {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
+            </>
+          )}
           </div>
         </>
       )}
@@ -933,7 +993,11 @@ function JobCard({
         </p>
       )}
       {job.status === 'needs_review' && <p className="notice job-review-text">{m.common_job_review()}</p>}
-      {job.status === 'failed' && <p className="error job-failed-text">{m.common_job_failed()}</p>}
+      {job.status === 'failed' && (
+        <p className="error job-failed-text">
+          {isPreview ? m.common_job_failed_preview() : m.common_job_failed()}
+        </p>
+      )}
       {job.status === 'canceled' && <p className="muted">{m.common_job_canceled()}</p>}
     </article>
   );

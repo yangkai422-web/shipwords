@@ -22,6 +22,16 @@ export interface ComposeInput {
   width: number;
   height: number;
   fps: number;
+  /** Visible text overlay for preview renders. */
+  watermark?: string;
+}
+
+export interface TrimInput {
+  jobId: string;
+  /** R2 key of the source clip. */
+  key: string;
+  start: number;
+  duration: number;
 }
 
 export interface FacesInput {
@@ -61,6 +71,8 @@ export interface FaceCheckResult {
 export interface Composer {
   /** Repeated calls with the same jobId give the same result, safe for Workflow retries. */
   compose(input: ComposeInput): Promise<{ song: ArrayBuffer; silent: ArrayBuffer }>;
+  /** Cut a short window from an R2 clip (preview reference). Optional on mock composers. */
+  trim?(input: TrimInput): Promise<ArrayBuffer>;
   /**
    * Output check: for each point, the highest face similarity (cosine, 0–1) between the original person there and any face in the output.
    * High means the original person is still in the output (not swapped). Same order as points. Read-only, repeatable.
@@ -115,6 +127,7 @@ export function containerComposer(namespace: DurableObjectNamespace, bucket: R2B
             width: input.width,
             height: input.height,
             fps: input.fps,
+            ...(input.watermark ? { watermark: input.watermark } : {}),
           }),
         );
         let reused = 0;
@@ -190,6 +203,20 @@ export function containerComposer(namespace: DurableObjectNamespace, bucket: R2B
       } catch (error) {
         await destroyCompose(stub);
         throw error;
+      }
+    },
+    async trim(input) {
+      const stub = stubFor(input.jobId);
+      try {
+        const form = new FormData();
+        form.set('start', String(input.start));
+        form.set('duration', String(input.duration));
+        form.set('source', await blobOf(bucket, input.key), 'source.mp4');
+        const trimmed = await stub.fetch('http://compose/trim', { method: 'POST', body: form });
+        if (!trimmed.ok) throw new Error(`trim failed: ${trimmed.status} ${await trimmed.text()}`);
+        return trimmed.arrayBuffer();
+      } finally {
+        await destroyCompose(stub);
       }
     },
     async release(jobId) {

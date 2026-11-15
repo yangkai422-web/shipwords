@@ -191,6 +191,48 @@ export function partsOf(job: { prompt: string; inputJson: string }, model: Model
   ];
 }
 
+
+function filesKeyFromUrl(url: string): string | null {
+  const marker = '/files/';
+  const at = url.indexOf(marker);
+  if (at < 0) return null;
+  const key = url.slice(at + marker.length).split('?')[0] ?? '';
+  if (!key || key.includes('..')) return null;
+  return key;
+}
+
+/** For preview parts, trim the reference video to sourceWindow and rewrite the public URL. Idempotent via R2. */
+async function withPreviewReference(
+  deps: RunnerDeps,
+  jobId: string,
+  input: SubmitInput,
+  part: JobPart,
+): Promise<SubmitInput> {
+  const window = part.sourceWindow;
+  if (!window) return input;
+  const video = input.references.find((ref) => ref.role === 'reference_video');
+  if (!video) return input;
+  const sourceKey = filesKeyFromUrl(video.url);
+  if (!sourceKey) throw new Error(`preview reference is not a site file: ${video.url}`);
+  const refKey = `jobs/${jobId}/ref.mp4`;
+  if (!(await deps.bucket.get(refKey))) {
+    if (!deps.composer?.trim) throw new Error('preview trim is not configured');
+    const bytes = await deps.composer.trim({
+      jobId,
+      key: sourceKey,
+      start: window.start,
+      duration: window.duration,
+    });
+    await deps.bucket.put(refKey, bytes, { httpMetadata: { contentType: 'video/mp4' } });
+  }
+  const prefix = video.url.slice(0, video.url.indexOf('/files/'));
+  const url = `${prefix}/files/${refKey}`;
+  return {
+    ...input,
+    references: input.references.map((ref) => (ref.role === 'reference_video' ? { ...ref, url } : ref)),
+  };
+}
+
 /**
  * Poll copies of the same request: the first success wins and the other copies are canceled.
  * Running while any copy runs; a query error is thrown only when no copy succeeded or is still running; failed once every copy failed.
@@ -564,7 +606,12 @@ async function runSteps(deps: RunnerDeps, jobId: string, step: StepRunner): Prom
                 const submitStart = Date.now();
         try {
           const { upstreamJobId } = await adapter.submit(
-            submitInput(job, index),
+            await withPreviewReference(
+              deps,
+              jobId,
+              submitInput(job, index),
+              partsOf(job, deps.models.find((m) => m.id === job.modelId)!)[index]!,
+            ),
             single ? jobId : `${jobId}:${partId}`,
           );
           if (!(await appendUpstreamJob(deps.db, jobId, index, upstreamJobId))) {
@@ -772,34 +819,49 @@ async function composeOutputs(
   const model = deps.models.find((m) => m.id === job.modelId);
   const effect = model?.effect;
   if (!effect?.compose) throw new Error(`model ${job.modelId} has no compose config`);
+  const effectCompose = effect.compose;
   if (!deps.composer) throw new Error('compose is not configured for this site');
   // A job created under an older effect config (for example before its shots were merged into one) rendered segments the current
   // config no longer lists: composing would silently use base clips for them and deliver the original footage. Fail with a refund instead.
+  const jobParts = partsOf(job, model!).filter((part) => part.kind !== 'image');
   const known = new Set(effect.segments.map((segment) => segment.id));
-  const stale = partsOf(job, model!)
-    .filter((part) => part.kind !== 'image' && !known.has(part.id))
-    .map((part) => part.id);
+  if (effect.preview) {
+    for (const window of effect.preview.windows) known.add(window.id);
+  }
+  const stale = jobParts.filter((part) => !known.has(part.id)).map((part) => part.id);
   if (stale.length > 0) throw new Error(`segments ${stale.join(', ')} are no longer in the effect config`);
-  const segments: ComposeSegment[] = effect.segments.map((segment) => {
-    const rendered = partKeys.get(segment.id);
-    // Shot cuts only apply to the model output; base clips already have the original timing.
-    return rendered
-      ? {
+  const previewPart = jobParts.find((part) => part.compose || part.sourceWindow);
+  const segments: ComposeSegment[] = previewPart
+    ? jobParts.map((part) => {
+        const rendered = partKeys.get(part.id);
+        if (!rendered) throw new Error(`preview part ${part.id} has no output`);
+        return {
           key: rendered,
-          target: segment.target!,
-          fit: segment.fit ?? 'stretch',
-          ...(segment.cuts ? { cuts: segment.cuts } : {}),
-        }
-      : { key: segment.base!, target: segment.target!, fit: 'stretch' };
-  });
-  const { audio, audioStart, audioDuration, width, height, fps } = effect.compose;
+          target: part.sourceWindow?.duration ?? part.compose?.audioDuration ?? effectCompose.audioDuration,
+          fit: 'trim' as const,
+        };
+      })
+    : effect.segments.map((segment) => {
+        const rendered = partKeys.get(segment.id);
+        // Shot cuts only apply to the model output; base clips already have the original timing.
+        return rendered
+          ? {
+              key: rendered,
+              target: segment.target!,
+              fit: segment.fit ?? 'stretch',
+              ...(segment.cuts ? { cuts: segment.cuts } : {}),
+            }
+          : { key: segment.base!, target: segment.target!, fit: 'stretch' };
+      });
+  const compose = { ...effectCompose, ...previewPart?.compose };
   const result = await deps.composer.compose({
     jobId,
     segments,
-    audio: { key: audio, start: audioStart, duration: audioDuration },
-    width,
-    height,
-    fps,
+    audio: { key: compose.audio, start: compose.audioStart, duration: compose.audioDuration },
+    width: compose.width,
+    height: compose.height,
+    fps: compose.fps,
+    ...(compose.watermark ? { watermark: compose.watermark } : {}),
   });
   const song = `jobs/${jobId}/${startIndex}.mp4`;
   const silent = `jobs/${jobId}/${startIndex + 1}.mp4`;

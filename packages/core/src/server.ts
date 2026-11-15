@@ -12,7 +12,7 @@ import {
   type SessionUser,
 } from './billing/handlers';
 import { PayPalProvider } from './billing/paypal';
-import type { PaymentProvider } from './billing/provider';
+import type { PaymentFact, PaymentProvider } from './billing/provider';
 import { StripeProvider } from './billing/stripe';
 import { getBalance } from './credits/ledger';
 import { createDb, type Db } from './db/client';
@@ -53,7 +53,10 @@ function createProvider(site: SiteConfig, env: CoreEnv): PaymentProvider {
   });
 }
 
-export function createCore(site: SiteConfig, options: { log?: Logger } = {}) {
+export function createCore(
+  site: SiteConfig,
+  options: { log?: Logger; onPaymentApplied?: (fact: PaymentFact) => void | Promise<void> } = {},
+) {
   const log = options.log ?? defaultLog;
   // env doesn't change within an isolate, so dependent objects are created lazily once and reused.
   let cached: {
@@ -75,7 +78,7 @@ export function createCore(site: SiteConfig, options: { log?: Logger } = {}) {
       return session ? { id: session.user.id, email: session.user.email, name: session.user.name } : null;
     };
     const provider = createProvider(site, env);
-    cached = { env, db, baseURL, auth, billing: { db, site, provider, baseURL, getUser, log } };
+    cached = { env, db, baseURL, auth, billing: { db, site, provider, baseURL, getUser, log, onPaymentApplied: options.onPaymentApplied } };
     return cached;
   }
 

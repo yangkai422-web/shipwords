@@ -17,6 +17,29 @@ export interface ReconcileContext {
   site: SiteConfig;
   provider: PaymentProvider;
   log?: (message: string, details: Record<string, unknown>) => void;
+  /**
+   * Optional site hook after a paid payment is applied (including webhook/sync retries).
+   * Must not throw in a way that fails billing: applyPayment swallows hook errors.
+   */
+  onPaymentApplied?: (fact: PaymentFact) => void | Promise<void>;
+}
+
+async function notifyPaymentApplied(
+  ctx: ReconcileContext,
+  fact: PaymentFact,
+  outcome: ReconcileOutcome,
+): Promise<ReconcileOutcome> {
+  if (outcome === 'applied' && fact.paid && ctx.onPaymentApplied) {
+    try {
+      await ctx.onPaymentApplied(fact);
+    } catch (error) {
+      ctx.log?.('onPaymentApplied failed', {
+        paymentRef: fact.paymentRef,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return outcome;
 }
 
 function creditsFor(site: SiteConfig, fact: PaymentFact) {
@@ -145,7 +168,7 @@ export async function applyPayment(ctx: ReconcileContext, fact: PaymentFact): Pr
   //    so even if the first concurrent request to return saw an intermediate state, the later one converges the result to the latest target.
   for (let attempt = 1; attempt <= MAX_ADJUST_ATTEMPTS; attempt++) {
     const current = await db.query.payments.findFirst({ where: eq(payments.id, row.id) });
-    if (!current) return 'applied';
+    if (!current) return notifyPaymentApplied(ctx, fact, 'applied');
     const target = targetRevoked(
       {
         amount: current.amount,
@@ -154,7 +177,7 @@ export async function applyPayment(ctx: ReconcileContext, fact: PaymentFact): Pr
       },
       current.creditsGranted,
     );
-    if (target === current.creditsRevoked) return 'applied';
+    if (target === current.creditsRevoked) return notifyPaymentApplied(ctx, fact, 'applied');
     const nextSeq = current.adjustSeq + 1;
     const idemKey = `adj:${current.id}:${nextSeq}`;
     const bump = db

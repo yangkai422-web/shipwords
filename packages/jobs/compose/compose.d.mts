@@ -19,6 +19,13 @@ export function buildFfmpegArgs(spec: {
   height: number;
   fps: number;
   output: string;
+  watermark?: string;
+}): string[];
+export function buildTrimArgs(input: {
+  input: string;
+  start: number;
+  duration: number;
+  output: string;
 }): string[];
 export function buildSilentArgs(input: string, output: string): string[];
 export function parsePoints(text: string): ([number, number] | [number, number, number])[];

@@ -67,6 +67,27 @@ export async function recordConversionEvent(
   }
 }
 
+
+/** Server-side pay_success: deduped by order id so webhook + return-page sync only count once. */
+export async function recordPaySuccess(
+  db: D1Database,
+  fact: {
+    orderId?: string | null;
+    provider?: string;
+    amount?: number;
+    currency?: string;
+    productId?: string | null;
+  },
+): Promise<boolean> {
+  if (!fact.orderId || fact.orderId.length > 120) return false;
+  const props: EventProps = {};
+  if (fact.provider) props.provider = fact.provider;
+  if (typeof fact.amount === 'number' && Number.isFinite(fact.amount)) props.amount = fact.amount;
+  if (fact.currency) props.currency = fact.currency;
+  if (fact.productId) props.product_id = fact.productId;
+  return recordConversionEvent(db, { name: 'pay_success', props, dedupeKey: fact.orderId });
+}
+
 const json = (body: unknown, status = 200) =>
   new Response(status === 204 ? null : JSON.stringify(body), {
     status,

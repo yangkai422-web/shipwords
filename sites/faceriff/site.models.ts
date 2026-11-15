@@ -45,6 +45,22 @@ function editPrompt(images: Readonly<Record<string, string>>) {
 
 const CLIP = 'assets/tinydesk/full-17s.mp4';
 
+function previewPrompt(images: Readonly<Record<string, string>>) {
+  const filled = (Object.keys(WHO) as Seat[]).filter((seat) => images[seat]);
+  const swaps = filled.map(
+    (seat) =>
+      `Completely replace only the head and face of ${WHO[seat]} with the head and face of the person or animal in ${images[seat]!.replace(/^@image(\d+)$/, '@image_$1')}, so none of the original facial features remain visible; keep that performer's original body, neck-down clothing, hands and arms from @video_1.`,
+  );
+  return [
+    'Edit @video_1.',
+    ...swaps,
+    "Each swapped head keeps the original person's head direction, facial expressions, mouth movements and lip-sync timing frame by frame. Keep each performer's original body, pose, gestures, hands and clothes from @video_1; do not change the body into an animal or replace hands with paws.",
+    'Keep everything else unchanged: the room, the shelves, the instruments, the microphones, the camera movement, the lighting, the timing and the video duration.',
+    'Keep the audio exactly identical to the original video. Do not add any new sounds.',
+  ].join(' ');
+}
+
+
 export default defineModels([
   {
     id: 'tiny-desk',
@@ -109,4 +125,65 @@ export default defineModels([
       },
     },
   },
+    {
+      id: 'tiny-desk-preview',
+      name: 'Tiny Desk preview',
+      kind: 'video',
+      upstream: 'yir',
+      upstreamModel: 'klingai/kling-4.0',
+      credits: 0,
+      guest: false,
+      allowedParameters: [],
+      maxReferences: 0,
+      // 5 s at 480p should be a fraction of the $3.06 full 18 s / 720p render; cap with headroom.
+      maxCost: '1.00',
+      timeoutMinutes: 15,
+      manualReview: false,
+      effect: {
+        slots: [
+          { id: 'lead', label: 'Lead vocals', required: false },
+          { id: 'sax', label: 'Sax', required: false },
+          { id: 'keys', label: 'Keys', required: false },
+          { id: 'backLeft', label: 'Backing vocals (left)', required: false },
+          { id: 'backRight', label: 'Backing vocals (right)', required: false },
+        ],
+        segments: [
+          {
+            id: 'preview',
+            referenceVideo: CLIP,
+            slots: ['lead', 'sax', 'keys', 'backLeft', 'backRight'],
+            prompt: previewPrompt,
+            parameters: { duration: 5, resolution: '480p', aspect_ratio: 'auto' },
+            maxCost: '1.00',
+            target: 5,
+            base: CLIP,
+          },
+        ],
+        compose: {
+          audio: 'assets/tinydesk/song.m4a',
+          audioStart: 1.375,
+          audioDuration: 5,
+          width: 480,
+          height: 854,
+          fps: 24,
+          watermark: 'FACERIFF',
+        },
+        preview: {
+          duration: 5,
+          resolution: '480p',
+          width: 480,
+          height: 854,
+          fps: 24,
+          maxCost: '1.00',
+          watermark: 'FACERIFF',
+          // First window that contains a filled seat wins, so the literal first 5 s is used
+          // when a band-seat photo is present; otherwise lead or sax so the user still sees their face.
+          windows: [
+            { id: 'band', start: 0, duration: 5, audioStart: 1.375, seats: ['keys', 'backLeft', 'backRight'] },
+            { id: 'lead', start: 5.333, duration: 5, audioStart: 6.708, seats: ['lead'] },
+            { id: 'sax', start: 11.625, duration: 5, audioStart: 13, seats: ['sax'] },
+          ],
+        },
+      },
+    },
 ]);

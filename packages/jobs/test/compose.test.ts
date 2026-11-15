@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFfmpegArgs,
   buildSilentArgs,
+  buildTrimArgs,
   matchCuts,
   parseCutTimes,
   parsePoints,
@@ -168,5 +169,38 @@ describe('output check points', () => {
       expect(() => parsePoints(bad)).toThrow();
     }
     expect(() => parsePoints('not json')).toThrow();
+  });
+});
+
+describe('watermark args', () => {
+  it('overlays a drawtext watermark after concat when watermark is set', () => {
+    const args = buildFfmpegArgs({
+      segments: [
+        { file: 'a.mp4', duration: 5, target: 5.333 },
+        { file: 'b.mp4', duration: 4, target: 2.688 },
+      ],
+      width: 720,
+      height: 1280,
+      fps: 24,
+      output: 'out.mp4',
+      watermark: 'FACERIFF',
+    });
+    const graph = args[args.indexOf('-filter_complex') + 1]!;
+    expect(graph).toContain('concat=n=2:v=1:a=0[vout]');
+    expect(graph).toContain("drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='FACERIFF'");
+    expect(graph.endsWith('[v]')).toBe(true);
+  });
+});
+
+describe('trim args', () => {
+  it('cuts a short window and re-encodes it', () => {
+    expect(buildTrimArgs({ input: 'full.mp4', start: 5.333, duration: 5, output: 'clip.mp4' })).toEqual(
+      expect.arrayContaining(['-ss', '5.333', '-t', '5', '-i', 'full.mp4', 'clip.mp4']),
+    );
+  });
+
+  it('rejects a non-positive window', () => {
+    expect(() => buildTrimArgs({ input: 'a', start: -1, duration: 5, output: 'o' })).toThrow(/trim window/);
+    expect(() => buildTrimArgs({ input: 'a', start: 0, duration: 0, output: 'o' })).toThrow(/trim window/);
   });
 });

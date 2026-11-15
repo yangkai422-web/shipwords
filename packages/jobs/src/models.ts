@@ -127,6 +127,40 @@ export interface EffectCompose {
   width: number;
   height: number;
   fps: number;
+  /** Optional visible text overlay (preview renders). */
+  watermark?: string;
+}
+
+/** Short, cheap preview of an effect: one low-res window instead of the full compose. */
+export interface EffectPreviewWindow {
+  id: string;
+  /** Start time in the reference/base clip (seconds). */
+  start: number;
+  duration: number;
+  /** Start time in compose.audio (seconds). */
+  audioStart: number;
+  /** Seats that appear in this window; used to pick a window that shows a filled face. */
+  seats: readonly string[];
+}
+
+export interface EffectPreview {
+  duration: number;
+  resolution: string;
+  width: number;
+  height: number;
+  fps: number;
+  maxCost: string;
+  watermark: string;
+  windows: readonly EffectPreviewWindow[];
+}
+
+export interface PartCompose {
+  audioStart: number;
+  audioDuration: number;
+  width: number;
+  height: number;
+  fps: number;
+  watermark?: string;
 }
 
 export interface EffectSpec {
@@ -134,6 +168,8 @@ export interface EffectSpec {
   segments: readonly EffectSegment[];
   compose?: EffectCompose;
   prep?: EffectPrep;
+  /** When set, effectParts emits one short preview segment instead of the full effect. */
+  preview?: EffectPreview;
 }
 
 /** Role of the user's reference image. */
@@ -246,6 +282,53 @@ function validateEffect(model: ModelDefinition, effect: EffectSpec) {
     if (!effect.segments.some((segment) => segment.slots.includes(slot.id)))
       throw new Error(`model ${modelId}: slot ${slot.id} is in no segment`);
   }
+  if (effect.preview) {
+    const preview = effect.preview;
+    if (
+      !(preview.duration > 0) ||
+      !(preview.width > 0) ||
+      !(preview.height > 0) ||
+      !(preview.fps > 0) ||
+      !preview.resolution ||
+      !preview.watermark ||
+      !(cents(preview.maxCost) > 0)
+    )
+      throw new Error(`model ${modelId}: preview needs duration, size, fps, resolution, watermark and maxCost`);
+    if (model.maxCost === undefined || cents(preview.maxCost) > cents(model.maxCost))
+      throw new Error(`model ${modelId}: preview maxCost exceeds model maxCost`);
+    const ids = new Set<string>();
+    if (preview.windows.length === 0) throw new Error(`model ${modelId}: preview needs windows`);
+    for (const window of preview.windows) {
+      if (ids.has(window.id) || !/^[a-z0-9_-]+$/.test(window.id))
+        throw new Error(`model ${modelId}: bad preview window id ${window.id}`);
+      ids.add(window.id);
+      if (
+        !(window.start >= 0) ||
+        !(window.duration > 0) ||
+        !(window.audioStart >= 0) ||
+        window.seats.length === 0 ||
+        window.seats.some((seat) => !slotIds.has(seat))
+      )
+        throw new Error(`model ${modelId}: preview window ${window.id} is invalid`);
+    }
+  }
+}
+
+
+/**
+ * Prefer the first window that includes a filled seat (typically the literal first 5 seconds).
+ * If nobody in that window was filled, use the next window that does, so lead-only / sax-only
+ * users still see their face instead of a band shot of the original coaches.
+ */
+export function pickPreviewWindow(
+  preview: EffectPreview,
+  filled: readonly string[],
+): EffectPreviewWindow | null {
+  const have = new Set(filled);
+  for (const window of preview.windows) {
+    if (window.seats.some((seat) => have.has(seat))) return window;
+  }
+  return null;
 }
 
 export function sanitizeParameters(model: ModelDefinition, input: unknown): Record<string, unknown> {
@@ -283,6 +366,10 @@ export interface JobPart {
   maxCost?: string;
   /** Effect video segments: the filled slots this part swaps, in segment slot order (the output check only looks at these). */
   slots?: string[];
+  /** Preview jobs: trim the reference video to this window before submitting upstream. */
+  sourceWindow?: { start: number; duration: number };
+  /** Preview jobs: compose overrides (short clip, lower res, watermark). */
+  compose?: PartCompose;
 }
 
 /**
@@ -327,6 +414,40 @@ export function effectParts(
   }
   const imageUrl = (slotId: string) => (prepared.has(slotId) ? `${PREP_REF}${slotId}` : filled.get(slotId)!);
   const mediaUrl = (ref: string) => (/^https:\/\//.test(ref) ? ref : assetUrl(ref));
+  if (effect.preview) {
+    const filledIds = effect.slots.map((slot) => slot.id).filter((id) => filled.has(id));
+    const window = pickPreviewWindow(effect.preview, filledIds);
+    const template = effect.segments[0];
+    if (!window || !template) return null;
+    const used = window.seats.filter((slotId) => filled.has(slotId));
+    if (used.length === 0) return null;
+    parts.push({
+      id: window.id,
+      upstreamModel: model.upstreamModel,
+      prompt: template.prompt(Object.fromEntries(used.map((slotId, i) => [slotId, `@image${i + 1}`]))),
+      references: [
+        { url: mediaUrl(referenceVideoOf(template, used)), role: 'reference_video' },
+        ...used.map((slotId) => ({ url: imageUrl(slotId), role: 'reference_image' })),
+      ],
+      parameters: {
+        duration: Math.ceil(window.duration),
+        resolution: effect.preview.resolution,
+        aspect_ratio: 'auto',
+      },
+      maxCost: effect.preview.maxCost,
+      slots: used,
+      sourceWindow: { start: window.start, duration: window.duration },
+      compose: {
+        audioStart: window.audioStart,
+        audioDuration: window.duration,
+        width: effect.preview.width,
+        height: effect.preview.height,
+        fps: effect.preview.fps,
+        watermark: effect.preview.watermark,
+      },
+    });
+    return parts;
+  }
   let rendered = 0;
   for (const segment of effect.segments) {
     const used = segment.slots.filter((slotId) => filled.has(slotId));

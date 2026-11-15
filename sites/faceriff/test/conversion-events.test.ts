@@ -6,6 +6,7 @@ import {
   isConversionEvent,
   loadConversionEvents,
   recordConversionEvent,
+  recordPaySuccess,
   sanitizeProps,
 } from '../src/lib/conversion-events';
 import { shanghaiDay } from '../src/lib/admin-data';
@@ -87,5 +88,40 @@ describe('admin conversion section', () => {
     const page = (await r?.text()) ?? '';
     expect(page).toContain('转化事件（今日');
     expect(page).toContain('点击渲染');
+  });
+});
+
+describe('recordPaySuccess', () => {
+  it('records once per order and ignores a missing order id', async () => {
+    expect(
+      await recordPaySuccess(env.DB, {
+        orderId: null,
+        provider: 'paypal',
+        amount: 988,
+        currency: 'usd',
+      }),
+    ).toBe(false);
+    const fact = {
+      orderId: 'ord_pay_1',
+      provider: 'paypal',
+      amount: 988,
+      currency: 'usd',
+      productId: 'video_1',
+    };
+    expect(await recordPaySuccess(env.DB, fact)).toBe(true);
+    expect(await recordPaySuccess(env.DB, fact)).toBe(false);
+    const snap = await loadConversionEvents(env.DB);
+    const paid = snap.recent.filter((r) => {
+      if (r.name !== 'pay_success') return false;
+      const props = JSON.parse(r.props) as { product_id?: string };
+      return props.product_id === 'video_1';
+    });
+    expect(paid).toHaveLength(1);
+    expect(JSON.parse(paid[0]!.props)).toEqual({
+      provider: 'paypal',
+      amount: 988,
+      currency: 'usd',
+      product_id: 'video_1',
+    });
   });
 });

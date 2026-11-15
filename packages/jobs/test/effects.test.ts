@@ -16,7 +16,7 @@ import {
   spendKey,
 } from '../src/lifecycle';
 import { approveReview, rejectReview } from '../src/review';
-import { defineModels, type EffectSegment, effectParts, type ModelDefinition } from '../src/models';
+import { defineModels, type EffectSegment, effectParts, pickPreviewWindow, type ModelDefinition } from '../src/models';
 import { PREP_HEDGE_MS, runGeneration, type StepRunner } from '../src/runner';
 import { jobReviews, jobs } from '../src/schema';
 import { type PollResult, type SubmitInput, type UpstreamAdapter, UpstreamError } from '../src/upstream';
@@ -1700,5 +1700,89 @@ describe('prep and reference audio', () => {
       ]);
       expect((await loadJob(db, jobId))?.status).toBe('succeeded');
     });
+  });
+});
+
+const previewModel = defineModels([
+  {
+    id: 'demo-preview',
+    name: 'Demo preview',
+    kind: 'video',
+    upstream: 'yir',
+    upstreamModel: 'vendor/edit',
+    credits: 0,
+    guest: false,
+    allowedParameters: [],
+    maxReferences: 0,
+    maxCost: '0.50',
+    timeoutMinutes: 10,
+    effect: {
+      slots: [
+        { id: 'left', label: 'Left', required: false },
+        { id: 'right', label: 'Right', required: false },
+      ],
+      segments: [
+        {
+          id: 'preview',
+          referenceVideo: 'assets/demo/left.mp4',
+          slots: ['left', 'right'],
+          prompt: (images) => `preview ${images.left ?? ''} ${images.right ?? ''}`,
+          parameters: { duration: 5, resolution: '480p' },
+          maxCost: '0.50',
+          target: 5,
+          base: 'assets/demo/left.mp4',
+        },
+      ],
+      compose: {
+        audio: 'assets/demo/song.m4a',
+        audioStart: 0,
+        audioDuration: 5,
+        width: 480,
+        height: 854,
+        fps: 24,
+        watermark: 'DEMO',
+      },
+      preview: {
+        duration: 5,
+        resolution: '480p',
+        width: 480,
+        height: 854,
+        fps: 24,
+        maxCost: '0.50',
+        watermark: 'DEMO',
+        windows: [
+          { id: 'early', start: 0, duration: 5, audioStart: 0, seats: ['left'] },
+          { id: 'late', start: 6, duration: 5, audioStart: 6, seats: ['right'] },
+        ],
+      },
+    },
+  },
+])[0]!;
+
+describe('preview windows', () => {
+  const preview = previewModel.effect!.preview!;
+
+  it('prefers the first window that contains a filled seat, then later ones', () => {
+    expect(pickPreviewWindow(preview, ['left'])?.id).toBe('early');
+    expect(pickPreviewWindow(preview, ['left', 'right'])?.id).toBe('early');
+    expect(pickPreviewWindow(preview, ['right'])?.id).toBe('late');
+    expect(pickPreviewWindow(preview, [])).toBeNull();
+  });
+
+  it('emits one zero-credit short part with a source window, 480p and a watermark', () => {
+    const parts = effectParts(previewModel, { right: '/files/uploads/up_a.png' }, upload, asset)!;
+    const video = parts.filter((part) => part.kind !== 'image');
+    expect(video).toHaveLength(1);
+    expect(video[0]!.id).toBe('late');
+    expect(video[0]!.parameters).toMatchObject({ duration: 5, resolution: '480p' });
+    expect(video[0]!.sourceWindow).toEqual({ start: 6, duration: 5 });
+    expect(video[0]!.compose).toMatchObject({
+      audioStart: 6,
+      audioDuration: 5,
+      width: 480,
+      height: 854,
+      watermark: 'DEMO',
+    });
+    expect(video[0]!.maxCost).toBe('0.50');
   });
 });

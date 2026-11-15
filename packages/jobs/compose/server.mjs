@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   buildCutArgs,
   buildFfmpegArgs,
   buildSilentArgs,
+  buildTrimArgs,
   matchCuts,
   parseCutTimes,
   parsePoints,
@@ -95,6 +96,9 @@ async function compose(req) {
       height: manifest.height,
       fps: manifest.fps,
       output: song,
+      ...(typeof manifest.watermark === 'string' && manifest.watermark
+        ? { watermark: manifest.watermark }
+        : {}),
     }),
   );
   await run('ffmpeg', buildSilentArgs(song, join(dir, 'silent.mp4')));
@@ -144,6 +148,31 @@ async function faces(req) {
   }
 }
 
+
+async function trim(req) {
+  const form = await new Request('http://local/', {
+    method: 'POST',
+    headers: req.headers,
+    body: req,
+    duplex: 'half',
+  }).formData();
+  const start = Number(form.get('start'));
+  const duration = Number(form.get('duration'));
+  if (!(start >= 0) || !(duration > 0 && duration <= 60)) throw new Error('bad trim window');
+  const dir = join('/tmp/trim', randomUUID());
+  await mkdir(dir, { recursive: true });
+  try {
+    const source = join(dir, 'source.mp4');
+    const output = join(dir, 'clip.mp4');
+    await save(form, 'source', source);
+    await run('ffmpeg', buildTrimArgs({ input: source, start, duration, output }));
+    return output;
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function sendFile(res, file, size) {
   res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': size });
   createReadStream(file).pipe(res);
@@ -158,6 +187,14 @@ createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/faces') {
       const body = JSON.stringify(await faces(req));
       return res.writeHead(200, { 'content-type': 'application/json' }).end(body);
+    }
+    if (req.method === 'POST' && req.url === '/trim') {
+      const file = await trim(req);
+      try {
+        return sendFile(res, file, (await stat(file)).size);
+      } finally {
+        await rm(dirname(file), { recursive: true, force: true });
+      }
     }
     const match = req.method === 'GET' && req.url?.match(/^\/files\/([a-z0-9_-]{1,80})\/(song|silent)\.mp4$/);
     if (match) {

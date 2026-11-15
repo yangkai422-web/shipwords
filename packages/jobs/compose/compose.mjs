@@ -13,10 +13,14 @@
 
 /**
  * Build ffmpeg args. Segments are scaled to width×height and fps, retimed by target/duration, concatenated, and optionally mixed with an audio track.
- * @param {{ segments: Segment[]; audio?: Audio | null; width: number; height: number; fps: number; output: string }} spec
+ * @param {{ segments: Segment[]; audio?: Audio | null; width: number; height: number; fps: number; output: string; watermark?: string }} spec
  */
+function escapeDrawtext(text) {
+  return String(text).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:').replace(/%/g, '%%');
+}
+
 export function buildFfmpegArgs(spec) {
-  const { segments, audio, width, height, fps, output } = spec;
+  const { segments, audio, width, height, fps, output, watermark } = spec;
   if (!segments.length) throw new Error('no segments');
   const args = ['-hide_banner', '-loglevel', 'error', '-y'];
   for (const segment of segments) {
@@ -55,7 +59,14 @@ export function buildFfmpegArgs(spec) {
     );
   });
   const inputs = segments.map((_, i) => `[v${i}]`).join('');
-  filters.push(`${inputs}concat=n=${segments.length}:v=1:a=0[v]`);
+  const concatLabel = watermark ? '[vout]' : '[v]';
+  filters.push(`${inputs}concat=n=${segments.length}:v=1:a=0${concatLabel}`);
+  if (watermark) {
+    const font = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
+    filters.push(
+      `[vout]drawtext=fontfile=${font}:text='${escapeDrawtext(watermark)}':fontcolor=white@0.9:fontsize=h/16:x=(w-text_w)/2:y=h-text_h-h/14:box=1:boxcolor=black@0.45:boxborderw=12[v]`,
+    );
+  }
   args.push('-filter_complex', filters.join(';'), '-map', '[v]');
   if (audio) args.push('-map', `${segments.length}:a`, '-c:a', 'aac', '-b:a', '160k', '-shortest');
   args.push(
@@ -185,6 +196,38 @@ export function buildSilentArgs(input, output) {
     '-an',
     '-c:v',
     'copy',
+    '-movflags',
+    '+faststart',
+    output,
+  ];
+}
+
+/** Cut start..start+duration from a reference clip and re-encode so the preview upstream gets a short, cheap input. */
+export function buildTrimArgs({ input, start, duration, output }) {
+  if (!(start >= 0) || !(duration > 0)) throw new Error('trim window must be positive');
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-ss',
+    String(start),
+    '-t',
+    String(duration),
+    '-i',
+    input,
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-crf',
+    '20',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '160k',
     '-movflags',
     '+faststart',
     output,
