@@ -73,6 +73,12 @@ export async function handleCheckout(deps: BillingDeps, request: Request): Promi
   // Price and credits come only from the server-side catalog; never trust any amount in the request.
   const product = body?.productId ? findProduct(deps.site, body.productId) : undefined;
   if (!product) return errorResponse(400, 'unknown_product');
+  if (product.kind === 'credits' && product.limitPerUser != null) {
+    const purchased = await paidProductCount(deps.db, user.id, product.id);
+    if (purchased >= product.limitPerUser) {
+      return errorResponse(409, 'product_limit_reached', 'This pack can only be purchased once.');
+    }
+  }
   const contact = resolveCheckoutEmail(body?.email, user.email);
   if (!contact.ok) return errorResponse(400, 'invalid_email', 'Enter a valid email address.');
 
@@ -196,6 +202,26 @@ export async function handleReceipt(deps: BillingDeps, request: Request): Promis
   const url = payment && receiptUrl ? await receiptUrl(payment.paymentRef) : null;
   if (!url?.startsWith('https://')) return errorResponse(404, 'receipt_not_found');
   return Response.redirect(url, 302);
+}
+
+/** Paid orders for one product, used to enforce limitPerUser. Refunded paid orders still count. */
+export async function paidProductCount(db: Db, userId: string, productId: string): Promise<number> {
+  const rows = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(and(eq(orders.userId, userId), eq(orders.productId, productId), eq(orders.status, 'paid')));
+  return rows.length;
+}
+
+/** Product IDs this user has already bought up to their limit and should not be offered again. */
+export async function unavailableProductIds(db: Db, site: SiteConfig, userId: string): Promise<string[]> {
+  const reached: string[] = [];
+  for (const product of site.products) {
+    if (product.kind !== 'credits' || product.limitPerUser == null) continue;
+    const purchased = await paidProductCount(db, userId, product.id);
+    if (purchased >= product.limitPerUser) reached.push(product.id);
+  }
+  return reached;
 }
 
 const LIVE_STATUSES = ['active', 'trialing', 'past_due'];

@@ -1,10 +1,18 @@
-import { useCheckout } from '@shipwords/core/react/account';
+import { useAccount, useCheckout } from '@shipwords/core/react/account';
 import type { Product } from '@shipwords/core/site';
 import { getRouteApi, Link } from '@tanstack/react-router';
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { authClient } from '~/lib/auth';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
+import {
+  ANCHOR_PRODUCT_ID,
+  listedProducts,
+  markDeviceTrialUsed,
+  readDeviceTrialUsed,
+  THREE_PACK_ID,
+  TRIAL_PRODUCT_ID,
+} from '~/site/packs';
 import { openSignIn } from '~/site/sign-in';
 import site from '../../site.config';
 
@@ -74,6 +82,7 @@ const INCLUDES = [
 
 /** Plan names come from messages by id; name in site.config is the English fallback for unregistered ids. */
 const PACK_NAMES: Record<string, () => string> = {
+  video_trial: m.common_pack_video_trial,
   video_1: m.common_pack_video_1,
   video_3: m.common_pack_video_3,
   video_10: m.common_pack_video_10,
@@ -82,10 +91,11 @@ const PACK_NAMES: Record<string, () => string> = {
 export const packName = (product: (typeof site.products)[number]) =>
   PACK_NAMES[product.id]?.() ?? product.name;
 
-/** Savings per video versus the single pack, from unit price, rounded to a percent. */
+/** Savings per video versus the $9.88 single pack, from unit price, rounded to a percent. */
 function savings(product: (typeof site.products)[number]) {
-  const base = site.products[0];
-  const unit = (p: typeof product) => p.price.amount / (p.credits / CREDITS_PER_VIDEO);
+  const base = site.products.find((item) => item.id === ANCHOR_PRODUCT_ID) ?? site.products[0];
+  if (product.id === ANCHOR_PRODUCT_ID || product.id === TRIAL_PRODUCT_ID) return 0;
+  const unit = (p: (typeof site.products)[number]) => p.price.amount / (p.credits / CREDITS_PER_VIDEO);
   return Math.round((1 - unit(product) / unit(base)) * 100);
 }
 
@@ -102,9 +112,11 @@ export function Plans({
 }) {
   const config = root.useLoaderData();
   const session = authClient(config.googleClientId).useSession();
+  const account = useAccount();
   const { checkout, pending, error } = useCheckout();
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [deviceTrialUsed, setDeviceTrialUsed] = useState(false);
   const prefilled = useRef(false);
 
   useEffect(() => {
@@ -114,6 +126,29 @@ export function Plans({
       prefilled.current = true;
     }
   }, [session.data]);
+
+  const trialUnavailable = Boolean(
+    account.data?.unavailableProductIds?.includes(TRIAL_PRODUCT_ID) ||
+      account.data?.orders.some((order) => order.productId === TRIAL_PRODUCT_ID),
+  );
+
+  useEffect(() => {
+    if (readDeviceTrialUsed()) setDeviceTrialUsed(true);
+  }, []);
+
+  useEffect(() => {
+    if (!trialUnavailable) return;
+    markDeviceTrialUsed();
+    setDeviceTrialUsed(true);
+  }, [trialUnavailable]);
+
+  const products = listedProducts({
+    unavailableProductIds: [
+      ...(account.data?.unavailableProductIds ?? []),
+      ...(trialUnavailable ? [TRIAL_PRODUCT_ID] : []),
+    ],
+    deviceTrialUsed,
+  });
 
   function buy(productId: string) {
     // After paying, return to the generator; stage photos restore from sessionStorage (tool.tsx).
@@ -157,18 +192,24 @@ export function Plans({
       </label>
       {emailError && <p className="error">{emailError}</p>}
       <div className="plans">
-        {site.products.map((product, i) => {
-          const featured = i === 1;
+        {products.map((product) => {
+          const featured = product.id === THREE_PACK_ID;
+          const trial = product.id === TRIAL_PRODUCT_ID;
           const save = savings(product);
           return (
-            <article key={product.id} className={featured ? 'plan plan-featured' : 'plan'}>
+            <article
+              key={product.id}
+              className={featured ? 'plan plan-featured' : trial ? 'plan plan-trial' : 'plan'}
+            >
               {featured && <span className="plan-badge">{m.common_plan_badge()}</span>}
+              {trial && <span className="plan-badge">{m.common_plan_trial_badge()}</span>}
               <Heading>{packName(product)}</Heading>
               <p className="price">{formatPrice(product)}</p>
               <p className="plan-unit">
                 <span className="mono">{m.common_plan_per_video({ price: perVideo(product) })}</span>
                 {save > 0 && <span className="plan-save">{m.common_plan_save({ percent: save })}</span>}
               </p>
+              {trial && <p className="plan-trial-note">{m.common_plan_trial_note()}</p>}
               {!compact && (
                 <ul className="plan-includes">
                   {INCLUDES.map((item) => (

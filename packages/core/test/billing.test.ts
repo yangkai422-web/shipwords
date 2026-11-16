@@ -10,6 +10,7 @@ import {
   handleWebhook,
   recentOrders,
   resolveCheckoutEmail,
+  unavailableProductIds,
 } from '../src/billing/handlers';
 import type {
   CheckoutFact,
@@ -418,6 +419,68 @@ describe('checkout', () => {
       body: JSON.stringify({ productId: 'nope' }),
     });
     expect((await handleCheckout(deps, unknown)).status).toBe(400);
+  });
+
+  it('enforces limitPerUser on a one-time pack after it is paid, without blocking other packs or other users', async () => {
+    const trialSite = defineSite({
+      ...site,
+      products: [
+        ...site.products,
+        {
+          id: 'trial',
+          kind: 'credits',
+          name: 'Trial',
+          price: { amount: 299, currency: 'usd' },
+          credits: 10,
+          expiresDays: null,
+          limitPerUser: 1,
+        },
+      ],
+    });
+    deps = { ...deps, site: trialSite };
+    const user = { id: uid(), email: 'trial@example.com', name: 'T' };
+    currentUser = user;
+    const checkout = (productId: string) =>
+      handleCheckout(
+        deps,
+        new Request('https://test.example/api/billing/checkout', {
+          method: 'POST',
+          body: JSON.stringify({ productId }),
+        }),
+      );
+
+    const first = await checkout('trial');
+    expect(first.status).toBe(200);
+    const { orderId } = (await first.json()) as { orderId: string };
+
+    // An unpaid checkout does not consume the one-time limit.
+    const whilePending = await checkout('trial');
+    expect(whilePending.status).toBe(200);
+
+    provider.checkouts.set(`cs_${orderId}`, {
+      orderId,
+      subscription: null,
+      payment: packPayment(user.id, `pi_${orderId}`, { orderId, productId: 'trial', amount: 299 }),
+    });
+    const sync = await handleSyncOrder(
+      deps,
+      new Request('https://test.example/api/billing/sync', {
+        method: 'POST',
+        body: JSON.stringify({ orderId }),
+      }),
+    );
+    expect(await sync.json()).toMatchObject({ status: 'paid', productId: 'trial' });
+    expect(await unavailableProductIds(db, trialSite, user.id)).toEqual(['trial']);
+
+    const second = await checkout('trial');
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ error: { code: 'product_limit_reached' } });
+
+    const unlimited = await checkout('pack_100');
+    expect(unlimited.status).toBe(200);
+
+    currentUser = { id: uid(), email: 'other-trial@example.com', name: 'O' };
+    expect((await checkout('trial')).status).toBe(200);
   });
 
   it('stores the checkout email on the order, falling back to the account email', async () => {

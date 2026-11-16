@@ -14,9 +14,10 @@ import { authClient } from '~/lib/auth';
 import { identify, track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
 import { openAccount } from '~/site/account';
-import { PhoneHandoff } from '~/site/phone-upload';
 import { assignOpenSeats, IMAGE_ACCEPT, isSupportedImage, prepareUploadImage } from '~/site/image';
-import { formatPrice, openPricing, PricingLink } from '~/site/pricing';
+import { anchorProduct, shouldShowThreePackUpsell, threePack } from '~/site/packs';
+import { PhoneHandoff } from '~/site/phone-upload';
+import { formatPrice, openPricing, PricingLink, perVideo } from '~/site/pricing';
 import { decideRender, decideUnlock } from '~/site/render-flow';
 import { openSignIn } from '~/site/sign-in';
 import site from '../../site.config';
@@ -29,8 +30,11 @@ import models from '../../site.models';
 const MODEL = models.find((model) => model.id === 'tiny-desk') ?? models[0];
 const PREVIEW_MODEL = models.find((model) => model.id === 'tiny-desk-preview');
 const SLOTS = MODEL.effect?.slots ?? [];
-const PRODUCT = site.products.find((p) => p.kind === 'credits' && p.credits === MODEL.credits);
+const PRODUCT = anchorProduct ?? site.products.find((p) => p.id === 'video_1');
 const PRICE = PRODUCT ? formatPrice(PRODUCT) : '';
+const THREE_PACK = threePack;
+const THREE_PACK_PRICE = THREE_PACK ? formatPrice(THREE_PACK) : '';
+const THREE_PACK_UNIT = THREE_PACK ? perVideo(THREE_PACK) : '';
 
 /**
  * The stage image public/media/stage.jpg is three frames of the viral clip (left: band at 16.8 s, top right: lead at 9.8 s, bottom right: sax at 14.9 s), 1020×960.
@@ -144,7 +148,6 @@ function saveDismissed(ids: string[]) {
     localStorage.setItem(DISMISSED_KEY, JSON.stringify(ids.slice(0, 100)));
   } catch {}
 }
-
 
 // The home page's return banner and the generator share one job list, so the home page calls useGeneration and passes it in.
 export function TinyDeskTool({
@@ -298,7 +301,11 @@ export function TinyDeskTool({
     } catch (e) {
       track('photo_upload_failed', { via });
       const code = e instanceof Error ? e.message : '';
-      setUploadError(code === 'heic' || code === 'type' ? m.common_tool_file_type() : code || m.common_tool_upload_failed());
+      setUploadError(
+        code === 'heic' || code === 'type'
+          ? m.common_tool_file_type()
+          : code || m.common_tool_upload_failed(),
+      );
     } finally {
       setUploading(null);
     }
@@ -513,7 +520,7 @@ export function TinyDeskTool({
     // blocked records which step this click stopped at; none means generation starts.
     track('render_click', { faces: own.length });
     const click = (blocked: string) => track('generate_click', { faces: own.length, blocked });
-    let decision = decideRender({
+    const decision = decideRender({
       ownPhotoCount: own.length,
       consent,
       rendering,
@@ -692,9 +699,7 @@ export function TinyDeskTool({
           {submitting || preparing ? (
             m.common_tool_starting()
           ) : (
-            <>
-              {confirmAnother ? m.common_tool_submit_another() : m.common_tool_submit()}
-            </>
+            <>{confirmAnother ? m.common_tool_submit_another() : m.common_tool_submit()}</>
           )}
         </button>
       </div>
@@ -714,7 +719,8 @@ export function TinyDeskTool({
               price={PRICE}
               isPreview={Boolean(PREVIEW_MODEL && job.modelId === PREVIEW_MODEL.id)}
               canUnlockWithCredits={
-                (account.data?.balance.available ?? 0) >= (typeof MODEL.credits === 'number' ? MODEL.credits : 10)
+                (account.data?.balance.available ?? 0) >=
+                (typeof MODEL.credits === 'number' ? MODEL.credits : 10)
               }
               unlocking={submitting || preparing}
               onUnlock={() => void unlockFull()}
@@ -889,13 +895,15 @@ function JobCard({
   const elapsed = Math.max(0, (now - job.createdAt) / 1000);
   const stage = STAGES.filter((s) => elapsed >= s.after).at(-1)!;
   const overtime = elapsed >= OVERTIME_AFTER;
-    const percent = Math.round(estimatedProgress(elapsed));
+  const percent = Math.round(estimatedProgress(elapsed));
   const minutesLeft = Math.max(1, Math.ceil((EXPECTED_SECONDS - elapsed) / 60));
   const remaining =
     elapsed < EXPECTED_SECONDS ? m.common_job_left({ minutes: String(minutesLeft) }) : m.common_job_almost();
 
   return (
-    <article className={`job${job.outputs[0] ? ' job-done' : ''}${job.status === 'failed' && !job.outputs[0] ? ' job-failed' : ''}`}>
+    <article
+      className={`job${job.outputs[0] ? ' job-done' : ''}${job.status === 'failed' && !job.outputs[0] ? ' job-failed' : ''}`}
+    >
       {onDismiss && (
         <button
           type="button"
@@ -914,7 +922,7 @@ function JobCard({
             {stage.text()}
           </p>
           {/* Elapsed time comes from the client clock, so it always differs from the server-rendered value */}
-            <div
+          <div
             className="job-progress"
             role="progressbar"
             aria-label={m.common_job_progress_aria()}
@@ -938,49 +946,59 @@ function JobCard({
           {/* biome-ignore lint/a11y/useMediaCaption: generated videos have no caption track. */}
           <video src={job.outputs[0].url} controls playsInline />
           <div className="job-body">
-          {isPreview ? (
-            <>
-              <p className="muted job-tip">{m.common_job_preview_note({ price })}</p>
-              {onUnlock && (
-                <button
-                  type="button"
-                  className="button primary job-unlock"
-                  disabled={unlocking}
-                  onClick={onUnlock}
-                >
-                  {unlocking
-                    ? m.common_job_unlocking()
-                    : canUnlockWithCredits
-                      ? m.common_job_unlock_credits()
-                      : m.common_job_unlock({ price })}
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="job-downloads">
-                {job.outputs.map((output, i) => (
-                  <a
-                    key={output.url}
-                    className="button"
-                    href={output.url}
-                    download={`tiny-desk-ai-${job.id.slice(-6)}-${VERSIONS[i] ?? i}.mp4`}
-                    data-rybbit-event="video_download"
-                    data-rybbit-prop-version={VERSIONS[i] ?? i}
+            {isPreview ? (
+              <>
+                <p className="muted job-tip">{m.common_job_preview_note({ price })}</p>
+                {onUnlock && (
+                  <button
+                    type="button"
+                    className="button primary job-unlock"
+                    disabled={unlocking}
+                    onClick={onUnlock}
                   >
-                    {(DOWNLOADS[i] ?? m.common_job_download)()}
-                  </a>
-                ))}
-              </div>
-              {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
-            </>
-          )}
+                    {unlocking
+                      ? m.common_job_unlocking()
+                      : canUnlockWithCredits
+                        ? m.common_job_unlock_credits()
+                        : m.common_job_unlock({ price })}
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="job-downloads">
+                  {job.outputs.map((output, i) => (
+                    <a
+                      key={output.url}
+                      className="button"
+                      href={output.url}
+                      download={`tiny-desk-ai-${job.id.slice(-6)}-${VERSIONS[i] ?? i}.mp4`}
+                      data-rybbit-event="video_download"
+                      data-rybbit-prop-version={VERSIONS[i] ?? i}
+                    >
+                      {(DOWNLOADS[i] ?? m.common_job_download)()}
+                    </a>
+                  ))}
+                </div>
+                {job.outputs.length > 1 && <p className="muted job-tip">{m.common_job_silent_tip()}</p>}
+                {shouldShowThreePackUpsell({ isPreview: false, hasOutput: true }) && THREE_PACK && (
+                  <aside className="job-upsell">
+                    <p className="job-upsell-title">{m.common_job_upsell_title()}</p>
+                    <p>{m.common_job_upsell_body({ price: THREE_PACK_PRICE, unit: THREE_PACK_UNIT })}</p>
+                    <button type="button" className="button primary" onClick={() => openPricing('upsell')}>
+                      {m.common_job_upsell_cta({ price: THREE_PACK_PRICE })}
+                    </button>
+                  </aside>
+                )}
+              </>
+            )}
           </div>
         </>
       )}
       {job.status === 'succeeded' && job.error?.code === 'quality_review' && (
         <p className="notice">
-          Your video is ready, but some faces may need checking. Please preview it and contact support if the swap is not right.
+          Your video is ready, but some faces may need checking. Please preview it and contact support if the
+          swap is not right.
         </p>
       )}
       {job.status === 'needs_review' && <p className="notice job-review-text">{m.common_job_review()}</p>}

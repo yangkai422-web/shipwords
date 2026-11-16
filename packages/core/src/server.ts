@@ -10,6 +10,7 @@ import {
   handleWebhook,
   recentOrders,
   type SessionUser,
+  unavailableProductIds,
 } from './billing/handlers';
 import { PayPalProvider } from './billing/paypal';
 import type { PaymentFact, PaymentProvider } from './billing/provider';
@@ -78,7 +79,13 @@ export function createCore(
       return session ? { id: session.user.id, email: session.user.email, name: session.user.name } : null;
     };
     const provider = createProvider(site, env);
-    cached = { env, db, baseURL, auth, billing: { db, site, provider, baseURL, getUser, log, onPaymentApplied: options.onPaymentApplied } };
+    cached = {
+      env,
+      db,
+      baseURL,
+      auth,
+      billing: { db, site, provider, baseURL, getUser, log, onPaymentApplied: options.onPaymentApplied },
+    };
     return cached;
   }
 
@@ -110,12 +117,13 @@ export function createCore(
         const { db, billing } = context();
         const user = await billing.getUser(request);
         if (!user) return errorResponse(401, 'unauthorized');
-        const [balance, subscription, orders] = await Promise.all([
+        const [balance, subscription, orders, unavailable] = await Promise.all([
           getBalance(db, user.id),
           activeSubscription(db, user.id),
           recentOrders(db, user.id),
+          unavailableProductIds(db, site, user.id),
         ]);
-        return json({ user, balance, subscription, orders });
+        return json({ user, balance, subscription, orders, unavailableProductIds: unavailable });
       },
     },
 

@@ -4,6 +4,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
+import { markDeviceTrialUsed, TRIAL_PRODUCT_ID } from '~/site/packs';
 
 const CREDITS_PER_VIDEO = 10;
 /** How long to stay after credits arrive before going back, long enough to read the balance. */
@@ -41,6 +42,14 @@ function ReturnPage() {
         setTimeout(() => window.location.assign(next), CONTINUE_DELAY_MS);
       });
   }, [order, next, refresh]);
+
+  useEffect(() => {
+    if (state !== 'paid' || !account.data) return;
+    const boughtTrial =
+      account.data.unavailableProductIds?.includes(TRIAL_PRODUCT_ID) ||
+      account.data.orders.some((row) => row.productId === TRIAL_PRODUCT_ID);
+    if (boughtTrial) markDeviceTrialUsed();
+  }, [state, account.data]);
 
   const videos =
     state === 'paid' && account.data

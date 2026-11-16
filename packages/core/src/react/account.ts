@@ -24,6 +24,8 @@ export interface AccountData {
     amountRefunded: number;
     dispute: 'open' | 'won' | 'lost' | null;
   }[];
+  /** Credit packs with limitPerUser that this account has already used up. */
+  unavailableProductIds?: string[];
 }
 
 export class ApiError extends Error {
@@ -85,7 +87,11 @@ export function useCheckout() {
     setPending(productId);
     setError(null);
     try {
-      const { url } = await postJson<{ url: string }>('/api/billing/checkout', { productId, returnPath, email });
+      const { url } = await postJson<{ url: string }>('/api/billing/checkout', {
+        productId,
+        returnPath,
+        email,
+      });
       window.location.assign(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Checkout failed');

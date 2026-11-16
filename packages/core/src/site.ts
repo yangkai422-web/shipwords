@@ -19,6 +19,8 @@ export interface CreditPackProduct extends ProductBase {
   credits: number;
   /** Days until purchased credits expire; null means never. */
   expiresDays: number | null;
+  /** Max paid purchases per user. Use 1 for a one-time trial pack. Omit for no limit. */
+  limitPerUser?: number;
 }
 
 export interface SubscriptionProduct extends ProductBase {
@@ -79,6 +81,11 @@ export function defineSite<const T extends SiteConfig>(config: T): T {
     ids.add(product.id);
     if (!Number.isSafeInteger(product.price.amount) || product.price.amount <= 0) {
       throw new Error(`product ${product.id}: price.amount must be a positive integer in minor units`);
+    }
+    if (product.kind === 'credits' && product.limitPerUser != null) {
+      if (!Number.isSafeInteger(product.limitPerUser) || product.limitPerUser < 1) {
+        throw new Error(`product ${product.id}: limitPerUser must be a positive integer`);
+      }
     }
     if (config.billing.provider === 'paypal' && product.kind === 'subscription' && !product.refs?.paypal) {
       throw new Error(`product ${product.id}: paypal subscriptions need refs.paypal (plan id)`);

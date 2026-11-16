@@ -35,6 +35,16 @@ export default defineSite({
       credits: 100,
       expiresDays: null,
     },
+    // One-time trial: one full 720p unwatermarked video. Do not change video_1's $9.88 price.
+    {
+      id: 'video_trial',
+      kind: 'credits',
+      name: 'Trial: 1 video',
+      price: { amount: 299, currency: 'usd' },
+      credits: 10,
+      expiresDays: null,
+      limitPerUser: 1,
+    },
   ],
   signup: { bonusCredits: 0, bonusExpiresDays: null, bonusPerIpDaily: 0 },
   // Caps free tiny-desk-preview jobs (real upstream cost in production). Full tiny-desk stays signed-in only.

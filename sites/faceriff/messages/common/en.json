@@ -34,6 +34,7 @@
   "common_guide_pricing_description": "one-time packs, what you get, refunds",
   "common_legal_updated": "Last updated {date}",
   "common_legal_questions": "Questions? Email",
+  "common_pack_video_trial": "Trial: 1 video",
   "common_pack_video_1": "1 video",
   "common_pack_video_3": "3 videos",
   "common_pack_video_10": "10 videos",
@@ -43,6 +44,8 @@
   "common_plan_include_watermark": "No watermark",
   "common_plan_include_expiry": "Credits never expire",
   "common_plan_badge": "Most popular",
+  "common_plan_trial_badge": "One-time trial",
+  "common_plan_trial_note": "One full 720p video, no watermark. Once per account.",
   "common_plan_per_video": "{price} / video",
   "common_plan_save": "Save {percent}%",
   "common_plan_redirecting": "Redirecting…",
@@ -205,5 +208,8 @@
   "common_job_unlock": "Unlock the full video · {price}",
   "common_job_unlock_credits": "Unlock the full video with your credits",
   "common_job_unlocking": "Starting the full video…",
-  "common_return_ready_preview": "Your preview is ready. Watch it ↓"
+  "common_return_ready_preview": "Your preview is ready. Watch it ↓",
+  "common_job_upsell_title": "Make more videos",
+  "common_job_upsell_body": "Get 3 full 720p videos for {price} — {unit} each.",
+  "common_job_upsell_cta": "Get 3 videos — {price}"
 }

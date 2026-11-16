@@ -34,6 +34,7 @@
   "common_guide_pricing_description": "一次性套餐、包含什么、退款",
   "common_legal_updated": "最后更新 {date}",
   "common_legal_questions": "有问题？发邮件到",
+  "common_pack_video_trial": "试用：1 条视频",
   "common_pack_video_1": "1 条视频",
   "common_pack_video_3": "3 条视频",
   "common_pack_video_10": "10 条视频",
@@ -43,6 +44,8 @@
   "common_plan_include_watermark": "无水印",
   "common_plan_include_expiry": "积分永不过期",
   "common_plan_badge": "最受欢迎",
+  "common_plan_trial_badge": "限购一次",
+  "common_plan_trial_note": "一条 720p 无水印完整视频，每个账号只能买一次。",
   "common_plan_per_video": "{price} / 条",
   "common_plan_save": "省 {percent}%",
   "common_plan_redirecting": "跳转中…",
@@ -205,5 +208,8 @@
   "common_job_unlock": "解锁完整视频 · {price}",
   "common_job_unlock_credits": "用积分解锁完整视频",
   "common_job_unlocking": "正在开始完整视频…",
-  "common_return_ready_preview": "你的预览已生成，点这里观看 ↓"
+  "common_return_ready_preview": "你的预览已生成，点这里观看 ↓",
+  "common_job_upsell_title": "再做几条视频",
+  "common_job_upsell_body": "3 条完整 720p 视频只要 {price}，合 {unit} / 条。",
+  "common_job_upsell_cta": "买 3 条视频 — {price}"
 }

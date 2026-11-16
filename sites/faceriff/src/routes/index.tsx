@@ -10,7 +10,7 @@ import { BeforeYouPay, formatPrice, Plans, packName } from '~/site/pricing';
 import { ReturnNotice, TinyDeskTool } from '~/site/tool';
 import site from '../../site.config';
 
-// Generator home page: face swap any of the 5 slots on stage, same price for 1–5 people. Render opens the packs; sign-in happens at checkout if needed. No free trial.
+// Generator home page: face swap any of the 5 slots on stage, same price for 1–5 people. Render starts a free preview; checkout still needs sign-in. A one-time $2.99 trial unlocks one full video; $9.88 stays the 1-video price.
 // Upload and generation live in ~/site/tool; the whole clip is swapped in one pass, re-aligned to the original cuts with the song mixed back in, plus a silent copy.
 // The generator suggests friends, coworkers and teammates, never uploading celebrity photos.
 // Copy lives in messages/home; locale depends on the request, so the constants below hold message functions called at render.
