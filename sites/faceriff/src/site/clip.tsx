@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { m } from '~/paraglide/messages.js';
 
-// Poster first: the mp4 is requested only after a click (no autoplay, no preload on first paint).
-// Only one clip plays sound at a time.
+// Poster first: click-to-play clips request the mp4 only after a click (no autoplay, no preload on first paint).
+// Hero autoplay clips still paint the WebP poster first (LCP fallback), then attach the mp4 after the first
+// frame and play it muted on a loop. Only the clips the parent opts in are loaded, so the other large
+// samples are not preloaded. Only one clip plays sound at a time.
 let muteCurrent: (() => void) | null = null;
 
 function posterSrc(clip: string) {
@@ -14,23 +16,50 @@ export function ClickToPlayClip({
   tag,
   label,
   sound = false,
+  autoPlayMuted = false,
+  priority = false,
+  onPlaying,
 }: {
   clip: string;
   tag?: string;
   label: string;
   sound?: boolean;
+  /** After first paint, load this mp4 and play it muted in a loop. Poster stays until playback starts. */
+  autoPlayMuted?: boolean;
+  /** Mark the poster as a likely LCP image (default finished hero clip only). */
+  priority?: boolean;
+  onPlaying?: () => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const onPlayingRef = useRef(onPlaying);
+  onPlayingRef.current = onPlaying;
 
   useEffect(() => {
-    if (!playing) return;
+    setMounted(false);
+    setStarted(false);
+    setMuted(true);
+  }, [clip]);
+
+  useEffect(() => {
+    if (!autoPlayMuted) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const id = requestAnimationFrame(() => {
+      setMuted(true);
+      setMounted(true);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [autoPlayMuted, clip]);
+
+  useEffect(() => {
+    if (!mounted) return;
     const el = video.current;
     if (!el) return;
     el.muted = muted;
     void el.play().catch(() => undefined);
-  }, [clip, playing, muted]);
+  }, [clip, mounted, muted]);
 
   const mute = () => {
     if (video.current) video.current.muted = true;
@@ -45,7 +74,7 @@ export function ClickToPlayClip({
     } else {
       setMuted(true);
     }
-    setPlaying(true);
+    setMounted(true);
   }
 
   const toggleSound = () => {
@@ -63,10 +92,12 @@ export function ClickToPlayClip({
     void el.play();
   };
 
+  const showPoster = !started;
+
   return (
     <div className="clip-frame">
       {tag ? <span className="poster-tag">{tag}</span> : null}
-      {playing ? (
+      {mounted ? (
         <video
           ref={video}
           key={clip}
@@ -77,16 +108,31 @@ export function ClickToPlayClip({
           playsInline
           preload="auto"
           aria-label={label}
+          onPlaying={() => {
+            setStarted(true);
+            onPlayingRef.current?.();
+          }}
         />
-      ) : (
+      ) : null}
+      {showPoster ? (
         <>
-          <img className="clip-poster" src={posterSrc(clip)} alt="" width={720} height={1280} />
-          <button type="button" className="clip-play" onClick={play} aria-label={m.home_clip_play()}>
-            <span className="clip-play-icon" />
-          </button>
+          <img
+            className={mounted ? 'clip-poster clip-poster-pending' : 'clip-poster'}
+            src={posterSrc(clip)}
+            alt=""
+            width={720}
+            height={1280}
+            decoding={priority ? 'sync' : 'async'}
+            {...(priority ? { fetchPriority: 'high' as const } : {})}
+          />
+          {!mounted ? (
+            <button type="button" className="clip-play" onClick={play} aria-label={m.home_clip_play()}>
+              <span className="clip-play-icon" />
+            </button>
+          ) : null}
         </>
-      )}
-      {playing && sound ? (
+      ) : null}
+      {mounted && sound ? (
         <button
           type="button"
           className="sound-toggle"

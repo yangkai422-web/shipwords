@@ -153,57 +153,90 @@ function generatedLabel(count: number) {
   return count === 1 ? m.home_generated_count_one() : m.home_generated_count({ count });
 }
 
-// Hero sample: single video window with three tabs (Cats / Knicks / Original), matching tinydeskai.io.
-// Cats is the FaceRiff-generated pet cut with audio; Knicks and Original keep the existing viral assets.
-const HERO_CLIPS = {
-  cats: {
-    clip: 'sample-cats',
-    tab: m.home_hero_tab_cats,
-    tag: m.home_cats_band_tag,
-    label: m.home_cats_band_label,
-    hook: m.home_cats_band_hook,
-    note: m.home_cats_band_note,
-  },
-  knicks: {
-    clip: 'viral-knicks',
-    tab: m.home_hero_tab_knicks,
-    tag: m.home_viral_knicks_tag,
-    label: m.home_viral_knicks_label,
-    hook: m.home_viral_knicks_hook,
-    note: m.home_viral_knicks_note,
-  },
-  original: {
-    clip: 'viral-coaches',
-    tab: m.home_hero_tab_viral,
-    tag: m.home_viral_coaches_tag,
-    label: m.home_viral_coaches_label,
-    hook: m.home_viral_coaches_hook,
-    note: m.home_viral_coaches_note,
-  },
+// Hero sample: side-by-side original viral clip (coaches) → finished real-person cut (Knicks).
+// The finished clip autoplays muted after first paint; its WebP poster is the LCP fallback.
+// The original mp4 loads only after the finished clip starts (or a short fallback delay).
+// Cats stay as a secondary example and are not the default first-screen sample or seat presets.
+type HeroView = 'compare' | 'cats';
+
+const CATS_CLIP = {
+  clip: 'sample-cats',
+  tab: m.home_hero_tab_cats,
+  tag: m.home_cats_band_tag,
+  label: m.home_cats_band_label,
+  hook: m.home_cats_band_hook,
+  note: m.home_cats_band_note,
 } as const;
 
-type HeroView = keyof typeof HERO_CLIPS;
-
 function HeroClip({ view, onPick }: { view: HeroView; onPick: (view: HeroView) => void }) {
-  const shown = HERO_CLIPS[view];
+  const [loadOriginal, setLoadOriginal] = useState(false);
   // Prefetch WebP posters only (no mp4) so a tab switch does not flash black.
   useEffect(() => {
-    for (const { clip } of Object.values(HERO_CLIPS)) new Image().src = `/media/${clip}.webp`;
+    for (const clip of ['viral-knicks', 'viral-coaches', 'sample-cats']) {
+      new Image().src = `/media/${clip}.webp`;
+    }
   }, []);
+  useEffect(() => {
+    if (view !== 'compare') return;
+    const timer = window.setTimeout(() => setLoadOriginal(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, [view]);
   return (
-    <figure className="sample-card">
+    <figure className={view === 'compare' ? 'sample-card sample-compare' : 'sample-card'}>
       <fieldset className="clip-switch" aria-label={m.home_hero_tab_label()}>
-        {(Object.keys(HERO_CLIPS) as HeroView[]).map((key) => (
-          <button key={key} type="button" aria-pressed={view === key} onClick={() => onPick(key)}>
-            {HERO_CLIPS[key].tab()}
-          </button>
-        ))}
+        <button type="button" aria-pressed={view === 'compare'} onClick={() => onPick('compare')}>
+          {m.home_hero_tab_compare()}
+        </button>
+        <button type="button" aria-pressed={view === 'cats'} onClick={() => onPick('cats')}>
+          {CATS_CLIP.tab()}
+        </button>
       </fieldset>
-      <ClickToPlayClip clip={shown.clip} tag={shown.tag()} label={shown.label()} sound />
-      <figcaption>
-        <strong>{shown.hook()}</strong>
-        <span className="mono">{shown.note()}</span>
-      </figcaption>
+      {view === 'compare' ? (
+        <>
+          <div className="compare-pair">
+            <div className="compare-col compare-before">
+              <span className="compare-chip">{m.home_compare_before()}</span>
+              <ClickToPlayClip
+                clip="viral-coaches"
+                tag={m.home_viral_coaches_tag()}
+                label={m.home_viral_coaches_label()}
+                sound
+                autoPlayMuted={loadOriginal}
+              />
+            </div>
+            <div className="compare-col compare-after">
+              <span className="compare-chip">{m.home_compare_after()}</span>
+              <ClickToPlayClip
+                clip="viral-knicks"
+                tag={m.home_viral_knicks_tag()}
+                label={m.home_viral_knicks_label()}
+                sound
+                autoPlayMuted
+                priority
+                onPlaying={() => setLoadOriginal(true)}
+              />
+            </div>
+          </div>
+          <figcaption>
+            <strong>{m.home_compare_caption()}</strong>
+            <span className="mono">{m.home_compare_note()}</span>
+          </figcaption>
+        </>
+      ) : (
+        <>
+          <ClickToPlayClip
+            clip={CATS_CLIP.clip}
+            tag={CATS_CLIP.tag()}
+            label={CATS_CLIP.label()}
+            sound
+            autoPlayMuted
+          />
+          <figcaption>
+            <strong>{CATS_CLIP.hook()}</strong>
+            <span className="mono">{CATS_CLIP.note()}</span>
+          </figcaption>
+        </>
+      )}
     </figure>
   );
 }
@@ -213,7 +246,7 @@ function HomePage() {
   const config = root.useLoaderData();
   const generatedCount = Route.useLoaderData();
   const generation = useGeneration({ recaptchaSiteKey: config.recaptchaSiteKey });
-  const [heroView, setHeroView] = useState<HeroView>('cats');
+  const [heroView, setHeroView] = useState<HeroView>('compare');
   useEffect(() => {
     track('home_view');
   }, []);
@@ -224,16 +257,14 @@ function HomePage() {
           <ReturnNotice jobs={generation.jobs} />
           <p className="rec mono">{m.home_hero_rec()}</p>
           <h1>{m.home_hero_title()}</h1>
+          <p className="hero-hook">{m.home_hero_hook()}</p>
           <p className="lead">{m.home_hero_lead()}</p>
           <p className="social-count mono">{generatedLabel(generatedCount)}</p>
           <p className="muted mono">{m.common_guide_updated({ date: m.home_updated_date() })}</p>
         </div>
         <HeroClip view={heroView} onPick={setHeroView} />
         <div className="hero-tool">
-          <TinyDeskTool
-            generation={generation}
-            stage={({ cats: 'dogs', knicks: 'ours', original: 'viral' } as const)[heroView]}
-          />
+          <TinyDeskTool generation={generation} stage={heroView === 'cats' ? 'dogs' : 'ours'} />
         </div>
       </section>
 

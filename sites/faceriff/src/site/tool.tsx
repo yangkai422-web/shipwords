@@ -69,9 +69,10 @@ const PRESETS = [
 // the browser uploads the slots that are still dogs at order time.
 // First version: no default dogs (the dog photos only exist after a real dog generation), so the stage starts with the original performers.
 // To restore: put lead/sax/keys/back-left/back-right-face.jpg (+ half-body .jpg) in public/media/dogs/ and refill this map.
-// Default cast for the Cats hero tab (public/media/cats/). Stage shows 192px face crops (*-face.jpg);
-// at order time the browser uploads the matching half-body photo (same name without -face) so the model gets clothes.
-// Knicks faces (public/media/knicks/) are display-only examples for the Knicks tab — treated as open presets, not uploaded.
+// Default cast is the Knicks real-person sample (public/media/knicks/), matching the default hero compare.
+// Stage shows 192px face crops (*-face.jpg). Knicks faces are display-only open presets (not uploaded).
+// The secondary Cats tab uses public/media/cats/; at order time the browser uploads the matching
+// half-body photo (same name without -face) so the model gets clothes.
 const CATS: Record<string, string> = {
   lead: '/media/cats/lead-face.jpg',
   sax: '/media/cats/sax-face.jpg',
@@ -148,7 +149,7 @@ function saveDismissed(ids: string[]) {
 // The home page's return banner and the generator share one job list, so the home page calls useGeneration and passes it in.
 export function TinyDeskTool({
   generation,
-  stage = 'viral',
+  stage = 'ours',
 }: {
   generation: ReturnType<typeof useGeneration>;
   /** The stage image follows the hero sample: coaches for the original, the swapped-in faces for our output (stage-ours.jpg), five dogs for the dog version (stage-dogs.jpg); all three share the slot coordinates. */
@@ -159,7 +160,7 @@ export function TinyDeskTool({
   const session = auth.useSession();
   const account = useAccount();
   const { jobs, generate, submitting, error } = generation;
-  const [photos, setPhotos] = useState<Record<string, string>>(CATS);
+  const [photos, setPhotos] = useState<Record<string, string>>(KNICKS);
   const [uploading, setUploading] = useState<string | null>(null);
   // While the dog photos upload before ordering, the button shows "Starting…" so it is not clicked twice.
   const [preparing, setPreparing] = useState(false);
@@ -255,7 +256,7 @@ export function TinyDeskTool({
     });
   }
 
-  // When the hero tab changes, swap preset faces to that cast (cats / knicks / empty for original).
+  // When the hero tab changes, swap preset faces to that cast (knicks for the default compare, cats for the Cats tab).
   // Keep any slot that already holds a user upload (/files/uploads/ or other non-preset path).
   useEffect(() => {
     const cast = CAST[stage];

@@ -133,6 +133,22 @@ h3 {
   color: var(--color-cream-2);
   max-width: 36rem;
 }
+.hero-hook {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0.9rem 0 0;
+  padding: 0.4rem 0.9rem;
+  font-family: var(--font-poster);
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  background: var(--color-rec);
+  border-radius: 999px;
+  box-shadow: 3px 3px 0 rgb(0 0 0 / 0.35);
+}
 .muted {
   color: var(--color-muted);
 }
@@ -179,6 +195,13 @@ h3 {
   object-fit: cover;
   border-radius: 14px;
   background: var(--color-panel);
+}
+.clip-poster-pending {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
 }
 .clip-play {
   position: absolute;
@@ -2052,7 +2075,7 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
 }
 
 /* Side-by-side before/after hero compare (coaches vs Knicks) */
-.sample-compare {
+.sample-card.sample-compare {
   max-width: 36rem;
 }
 .compare-pair {
@@ -2104,8 +2127,10 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
 }
 @media (max-width: 760px) {
   /* Keep two 9:16 previews side-by-side on phones (no tall stack) */
+  .sample-card.sample-compare,
   .sample-compare {
     max-width: 100%;
+    width: 100%;
     margin-inline: auto;
   }
   .compare-pair {
@@ -2245,6 +2270,7 @@ button.primary:active:not(:disabled), .button.primary:active { box-shadow: 0 2px
     line-height: 1.08;
   }
   .lead { font-size: 1.02rem; max-width: none; }
+  .hero-hook { font-size: 0.82rem; padding: 0.35rem 0.75rem; }
   .hero {
     padding: 0.75rem 0 2rem;
     row-gap: 1.1rem;
