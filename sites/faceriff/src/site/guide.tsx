@@ -1,32 +1,35 @@
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { m } from '~/paraglide/messages.js';
+import { GUIDE_PATHS } from '~/site/guide-paths';
 
 // Shared by the guide pages (tutorial, template, meme origin, free comparison): long poster-paper card (DESIGN.md "Content pages"), FAQ and footer links.
-// Each page answers one sub-question; that is the kind of page ChatGPT cited in tests. Register new guides in GUIDES; sitemap, llms.txt and footer read from it.
+// Each page answers one sub-question; that is the kind of page ChatGPT cited in tests. Register new guides in GUIDE_PATHS and GUIDE_COPY; sitemap, llms.txt and footer read from them.
 
-export const GUIDES = [
-  {
-    path: '/how-to-make-outstanding-tiny-desk-ai-video',
+const GUIDE_COPY = {
+  '/how-to-make-outstanding-tiny-desk-ai-video': {
     title: m.common_guide_howto_title,
     description: m.common_guide_howto_description,
   },
-  {
-    path: '/outstanding-tiny-desk-ai-template',
+  '/tiny-desk-template': {
+    title: m.common_guide_template_find_title,
+    description: m.common_guide_template_find_description,
+  },
+  '/outstanding-tiny-desk-ai-template': {
     title: m.common_guide_template_title,
     description: m.common_guide_template_description,
   },
-  {
-    path: '/outstanding-tiny-desk-meme',
+  '/outstanding-tiny-desk-meme': {
     title: m.common_guide_meme_title,
     description: m.common_guide_meme_description,
   },
-  {
-    path: '/tiny-desk-ai-free',
+  '/tiny-desk-ai-free': {
     title: m.common_guide_free_title,
     description: m.common_guide_free_description,
   },
-] as const;
+} as const;
+
+export const GUIDES = GUIDE_PATHS.map((path) => ({ path, ...GUIDE_COPY[path] }));
 
 export interface FaqItem {
   q: string;

@@ -2,6 +2,7 @@ import { pageHead } from '@shipwords/core/seo';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { m } from '~/paraglide/messages.js';
 import { Faq, type FaqItem, faqJsonLd, GuidePage } from '~/site/guide';
+import { getAnchorProduct, getProduct, THREE_PACK_ID } from '~/site/packs';
 import { formatPrice, packName, perVideo } from '~/site/pricing';
 import site from '../../site.config';
 
@@ -9,6 +10,8 @@ import site from '../../site.config';
 // States plainly that there is no free render; comparison data comes from the competitor research in the README. When prices change, update here and guides_free_checked.
 
 const PATH = '/tiny-desk-ai-free';
+const ANCHOR_PRICE = formatPrice(getAnchorProduct());
+const MULTI_PACKS = [getProduct(THREE_PACK_ID), getProduct('video_10')];
 
 const freeOptions = () => [
   {
@@ -30,7 +33,7 @@ const generators = () => [
     name: site.name,
     people: m.guides_free_gen_us_people(),
     quality: '720p',
-    price: formatPrice(site.products[0]),
+    price: ANCHOR_PRICE,
     free: m.guides_free_gen_no(),
     song: m.guides_free_gen_song_silent(),
   },
@@ -87,21 +90,20 @@ const generators = () => [
 const faq = (): FaqItem[] => [
   {
     q: m.guides_free_faq1_q(),
-    a: m.guides_free_faq1_a({ site: site.name, price: formatPrice(site.products[0]) }),
+    a: m.guides_free_faq1_a({ site: site.name, price: ANCHOR_PRICE }),
   },
   { q: m.guides_free_faq2_q(), a: m.guides_free_faq2_a() },
   { q: m.guides_free_faq3_q(), a: m.guides_free_faq3_a() },
   {
     q: m.guides_free_faq4_q(),
-    a: m.guides_free_faq4_a({ site: site.name, price: formatPrice(site.products[0]) }),
+    a: m.guides_free_faq4_a({ site: site.name, price: ANCHOR_PRICE }),
   },
   {
     q: m.guides_free_faq5_q(),
     a: m.guides_free_faq5_a({
-      packs: site.products
-        .slice(1)
-        .map((p) => m.guides_free_faq5_pack({ name: packName(p), price: formatPrice(p) }))
-        .join(m.guides_free_faq5_pack_or()),
+      packs: MULTI_PACKS.map((p) => m.guides_free_faq5_pack({ name: packName(p), price: formatPrice(p) })).join(
+        m.guides_free_faq5_pack_or(),
+      ),
     }),
   },
 ];
@@ -184,8 +186,8 @@ function FreePage() {
 
       <h2>{m.guides_free_cheaper_heading()}</h2>
       <ul>
-        <li>{m.guides_free_cheaper_people({ price: formatPrice(site.products[0]) })}</li>
-        <li>{m.guides_free_cheaper_packs({ price: perVideo(site.products[1]) })}</li>
+        <li>{m.guides_free_cheaper_people({ price: ANCHOR_PRICE })}</li>
+        <li>{m.guides_free_cheaper_packs({ price: perVideo(getProduct(THREE_PACK_ID)) })}</li>
         <li>{m.guides_free_cheaper_not()}</li>
       </ul>
       <p>

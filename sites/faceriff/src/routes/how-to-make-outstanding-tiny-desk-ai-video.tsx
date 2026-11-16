@@ -2,6 +2,7 @@ import { pageHead } from '@shipwords/core/seo';
 import { createFileRoute } from '@tanstack/react-router';
 import { m } from '~/paraglide/messages.js';
 import { Faq, type FaqItem, faqJsonLd, GuidePage } from '~/site/guide';
+import { getAnchorProduct } from '~/site/packs';
 import { formatPrice } from '~/site/pricing';
 import site from '../../site.config';
 
@@ -9,6 +10,8 @@ import site from '../../site.config';
 // Copy follows the request locale, so the arrays below are functions called at render.
 
 const PATH = '/how-to-make-outstanding-tiny-desk-ai-video';
+const ANCHOR = getAnchorProduct();
+const ANCHOR_PRICE = formatPrice(ANCHOR);
 
 const steps = () => [
   { name: m.guides_howto_step1_name(), text: m.guides_howto_step1_text() },
@@ -39,8 +42,8 @@ export const Route = createFileRoute('/how-to-make-outstanding-tiny-desk-ai-vide
           totalTime: 'PT10M',
           estimatedCost: {
             '@type': 'MonetaryAmount',
-            currency: site.products[0].price.currency.toUpperCase(),
-            value: (site.products[0].price.amount / 100).toFixed(2),
+            currency: ANCHOR.price.currency.toUpperCase(),
+            value: (ANCHOR.price.amount / 100).toFixed(2),
           },
           step: steps().map((step, i) => ({
             '@type': 'HowToStep',
@@ -68,7 +71,7 @@ function HowToPage() {
         <li>{m.guides_howto_need_photos()}</li>
         <li>{m.guides_howto_need_people()}</li>
         <li>
-          {m.guides_howto_need_price({ price: formatPrice(site.products[0]) })}
+          {m.guides_howto_need_price({ price: ANCHOR_PRICE })}
           <a href="/#pricing">{m.guides_howto_need_price_link()}</a>
           {m.guides_howto_need_price_after()}
         </li>

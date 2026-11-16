@@ -14,6 +14,17 @@ export function productById(id: string) {
   return site.products.find((product) => product.id === id);
 }
 
+export function getProduct(id: string) {
+  const product = productById(id);
+  if (!product) throw new Error('Missing product ' + id);
+  return product;
+}
+
+/** The public $9.88 1-video price. Never take site.products[0] for this. */
+export function getAnchorProduct() {
+  return getProduct(ANCHOR_PRODUCT_ID);
+}
+
 export const anchorProduct = productById(ANCHOR_PRODUCT_ID);
 export const threePack = productById(THREE_PACK_ID);
 export const trialProduct = productById(TRIAL_PRODUCT_ID);

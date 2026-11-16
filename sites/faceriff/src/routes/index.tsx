@@ -6,6 +6,7 @@ import { getGenerationCount } from '~/lib/generation-stats';
 import { track } from '~/lib/track';
 import { m } from '~/paraglide/messages.js';
 import { ClickToPlayClip } from '~/site/clip';
+import { getAnchorProduct } from '~/site/packs';
 import { BeforeYouPay, formatPrice, Plans, packName } from '~/site/pricing';
 import { ReturnNotice, TinyDeskTool } from '~/site/tool';
 import site from '../../site.config';
@@ -16,7 +17,7 @@ import site from '../../site.config';
 // Copy lives in messages/home; locale depends on the request, so the constants below hold message functions called at render.
 
 const RESOLUTION = '720p';
-const BAND_PRICE = formatPrice(site.products[0]);
+const BAND_PRICE = formatPrice(getAnchorProduct());
 
 // The 4 original shots of the viral clip (shot-*.mp4 in public/media), cut at the original cut points. Swap in real FaceRiff outputs once they exist.
 const SHOTS = [

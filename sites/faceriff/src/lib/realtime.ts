@@ -1,5 +1,6 @@
 import { DAY, shanghaiDay } from './admin-data';
 import type { VisitorDimension } from './visitor-dimensions';
+import { GUIDE_PATHS, LEGAL_PATHS } from '../site/guide-paths';
 
 export const MINUTE = 60_000;
 export const HOUR = 3_600_000;
@@ -7,21 +8,7 @@ export const HOUR = 3_600_000;
 export const REALTIME_RETENTION = 48 * HOUR;
 
 // Public document routes only. Token routes collapse to a pattern; anything else is 'other' (never a raw path).
-const PAGES = new Set([
-  '/',
-  '/account',
-  '/billing/return',
-  '/dmca',
-  '/how-to-make-outstanding-tiny-desk-ai-video',
-  '/login',
-  '/outstanding-tiny-desk-ai-template',
-  '/outstanding-tiny-desk-meme',
-  '/pricing',
-  '/privacy',
-  '/refunds',
-  '/terms',
-  '/tiny-desk-ai-free',
-]);
+const PAGES = new Set<string>(['/', '/account', '/billing/return', '/login', '/pricing', ...GUIDE_PATHS, ...LEGAL_PATHS]);
 export function pageKey(pathname: string): string {
   const p = pathname.toLowerCase().replace(/\/+$/, '') || '/';
   if (PAGES.has(p)) return p;
